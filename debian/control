@@ -4,7 +4,7 @@ Priority: optional
 Maintainer: David Walther <david@clearbrookdistillery.com>
 Build-Depends: debhelper-compat (= 13)
 Standards-Version: 4.7.0
-Homepage: https://github.com/moebiusV/p9share
+Homepage: https://github.com/moebiusV/9share
 Rules-Requires-Root: no
 
 Package: p9share

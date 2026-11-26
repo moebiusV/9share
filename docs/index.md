@@ -7,7 +7,7 @@ description: Share directories between machines over 9P, through ssh. One comman
 
 **Share directories between machines over 9P, through ssh.** One command on the machine that has the files, one on the machine that shows them.
 
-[![License: GPL v2+](https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg)](https://github.com/moebiusV/p9share/blob/main/COPYING)
+[![License: GPL v2+](https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg)](https://github.com/moebiusV/9share/blob/main/COPYING)
 ![Linux](https://img.shields.io/badge/Debian%20%7C%20Ubuntu%20%7C%20WSL2-orange)
 
 ## In two commands
@@ -57,7 +57,7 @@ mount "projects" {
 }
 ```
 
-The parser is generated from [`grammars/p9share.hbnf`](https://github.com/moebiusV/p9share/blob/main/grammars/p9share.hbnf) by [hbnf](https://github.com/moebiusV/hbnf) and committed, so building needs no hbnf.
+The parser is generated from [`grammars/p9share.hbnf`](https://github.com/moebiusV/9share/blob/main/grammars/p9share.hbnf) by [hbnf](https://github.com/moebiusV/hbnf) and committed, so building needs no hbnf.
 
 ## How it works
 
@@ -82,7 +82,7 @@ The export is the directory you name, with your rights. The mount is `nosuid,nod
 
 ## Documentation
 
-`p9share(8)`, `p9share.conf(5)` and `daud(8)` ship with the package; [README](https://github.com/moebiusV/p9share/blob/main/README), [INSTALL](https://github.com/moebiusV/p9share/blob/main/INSTALL) and [HACKING](https://github.com/moebiusV/p9share/blob/main/HACKING) are in the repository.
+`p9share(8)`, `p9share.conf(5)` and `daud(8)` ship with the package; [README](https://github.com/moebiusV/9share/blob/main/README), [INSTALL](https://github.com/moebiusV/9share/blob/main/INSTALL) and [HACKING](https://github.com/moebiusV/9share/blob/main/HACKING) are in the repository.
 
 ## License
 
