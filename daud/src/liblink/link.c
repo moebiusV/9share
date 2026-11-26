@@ -5,7 +5,10 @@
  *   HELLO   dialer -> acceptor, first: "P9L1" flags:u8 sid:16 received:u64 mech:s8 uname:s8 aname:s16
  *             flags bit 0: this is a new session (not a continuation); received: bytes of the session's other direction
  *             the dialer has taken in; mech: the SASL mechanism the dialer will use; uname, aname: what the mount asks for.
- *   AUTH    either way, between HELLO and STATUS: one step of the SASL mechanism (none for EXTERNAL).
+ *   AUTH    either way, between HELLO and STATUS: one step of the SASL mechanism (none for EXTERNAL).  With SCRAM-SHA-256 the
+ *             order is HELLO, AUTH(client-first) -> AUTH(server-first) <- AUTH(client-final) -> AUTH(server-final), STATUS <-.
+ *             The acceptor parses the HELLO but acts on it (new session, replacement, lost) only after the proof checks out;
+ *             a failed proof ends the carrier and changes nothing.  The dialer accepts no STATUS before the server's proof.
  *   STATUS  acceptor -> dialer, once: status:u8 received:u64
  *             status 0: a new session began; 1: the session continues; 2: not known here (lost); 3: refused.
  *   DATA    bytes of the 9P connection (at most 16 KB a frame), in order, each byte once per carrier.
@@ -51,9 +54,15 @@ struct lk {
     uint64_t  rx_total, rx_acked_sent;
     uint8_t   in[MAXFRAME + 16];
     size_t    in_len;
-    uint8_t   out[MAXFRAME + 16];
+    uint8_t   out[MAXFRAME + 4096];            /* handshake frames queue behind one another; data frames only when it is empty */
     size_t    out_len, out_off;
     int       got_hello, close_after_flush;
+    int       auth_done;                       /* the SASL exchange on this carrier has succeeded */
+    /* acceptor with a secret: the HELLO is parsed but acted on only once the dialer has proved the secret */
+    int       hp_pending, hp_fresh;
+    uint8_t   hp_sid[LK_SID_LEN];
+    uint64_t  hp_rx;
+    char      hp_un[LK_NAME_MAX], hp_an[LK_PATH_MAX];
     uint64_t  peer_rx;
     time_t    down_since;
     unsigned  ev;
@@ -150,6 +159,7 @@ static unsigned drop(lk_t *l, const char *why)
     l->auth = NULL;
     l->in_len = l->out_len = l->out_off = 0;
     l->got_hello = l->close_after_flush = 0;
+    l->auth_done = l->hp_pending = 0;
     if (l->state != LK_S_LOST)
         l->state = LK_S_DETACHED;
     l->down_since = time(NULL);
@@ -165,14 +175,17 @@ void lk_detach(lk_t *l)
 
 static int queue(lk_t *l, int type, const uint8_t *payload, size_t n)
 {
-    if (l->out_len != l->out_off || n > MAXFRAME)
+    uint8_t *o;
+    if (l->out_off == l->out_len)
+        l->out_off = l->out_len = 0;
+    if (n > MAXFRAME || l->out_len + HDR + n > sizeof l->out)
         return -1;
-    l->out[0] = (uint8_t)type;
-    put32(l->out + 1, (uint32_t)n);
+    o = l->out + l->out_len;
+    o[0] = (uint8_t)type;
+    put32(o + 1, (uint32_t)n);
     if (n)
-        memcpy(l->out + HDR, payload, n);
-    l->out_len = HDR + n;
-    l->out_off = 0;
+        memcpy(o + HDR, payload, n);
+    l->out_len += HDR + n;
     return 0;
 }
 
@@ -215,8 +228,20 @@ int lk_attach(lk_t *l, int fd)
     l->state = LK_S_HANDSHAKE;
     l->in_len = l->out_len = l->out_off = 0;
     l->got_hello = l->close_after_flush = 0;
-    if (l->role == LK_DIALER)
-        return send_hello(l);
+    l->auth_done = l->hp_pending = 0;
+    lk_auth_free(l->auth);
+    l->auth = NULL;
+    if (l->role == LK_DIALER) {
+        int bad = send_hello(l) < 0;
+        if (!bad && l->secret) {                    /* the first SASL message goes out with the HELLO */
+            uint8_t m[256];
+            size_t k;
+            l->auth = lk_auth_new(l->secret, 0);
+            bad = !l->auth || lk_auth_first(l->auth, m, sizeof m, &k) < 0 || queue(l, F_AUTH, m, k) < 0;
+        }
+        if (bad)
+            l->ev |= drop(l, "the handshake could not begin");
+    }
     return 0;
 }
 
@@ -258,79 +283,130 @@ static void become_up(lk_t *l)
     l->ev |= LK_EV_UP;
 }
 
+/* act on the parsed HELLO (kept in hp_*): is it a new session, a continuation, one this end does not know, or a replacement?
+ * With a secret this runs only after the dialer has proved it, so an unauthenticated peer changes nothing here. */
+static int decide_hello(lk_t *l)
+{
+    uint8_t status, reply[9];
+    int same = l->have_sid && memcmp(l->hp_sid, l->sid, LK_SID_LEN) == 0;
+    l->hp_pending = 0;
+    if (!same && !l->hp_fresh)
+        status = ST_LOST;                           /* a continuation of a session this end does not have */
+    else if (!same && l->have_sid) {
+        l->ev |= LK_EV_RESET;                       /* a new session while the old one lives: the caller starts afresh */
+        seterr(l, "a new session replaces the old one");
+        queue(l, F_CLOSE, (const uint8_t *)"\5reset", 6);
+        l->close_after_flush = 1;
+        return 0;
+    } else
+        status = same ? ST_RESUMED : ST_NEW;
+    l->peer_rx = l->hp_rx;
+    if (status == ST_NEW) {
+        memcpy(l->sid, l->hp_sid, LK_SID_LEN);
+        l->have_sid = 1;
+        snprintf(l->uname, sizeof l->uname, "%s", l->hp_un);
+        snprintf(l->aname, sizeof l->aname, "%s", l->hp_an);
+    }
+    if (status == ST_NEW || status == ST_RESUMED) {
+        if (status == ST_NEW && l->peer_rx != 0)
+            status = ST_LOST;
+        if (l->peer_rx < l->tx_acked || l->peer_rx > l->tx_total)
+            status = ST_LOST;
+    }
+    reply[0] = status;
+    put64(reply + 1, l->rx_total);
+    if (queue(l, F_STATUS, reply, sizeof reply) < 0)
+        return -1;
+    if (status == ST_LOST || status == ST_REFUSED) {
+        l->close_after_flush = 1;
+        return 0;
+    }
+    ack_to(l, l->peer_rx);
+    become_up(l);
+    if (status == ST_NEW)
+        l->ev |= LK_EV_NEW;
+    return 0;
+}
+
 /* a frame arrived */
 static int on_frame(lk_t *l, int type, const uint8_t *p, size_t n)
 {
     switch (type) {
     case F_HELLO: {
-        uint8_t status, reply[9];
+        uint8_t reply[9];
         size_t o = 4, k;
-        int fresh, same;
-        char mech[LK_NAME_MAX], un[LK_NAME_MAX], an[LK_PATH_MAX];
+        char mech[LK_NAME_MAX];
         if (l->role != LK_ACCEPTOR || l->got_hello || n < 4 + 1 + LK_SID_LEN + 8 + 1 || memcmp(p, "P9L1", 4) != 0) {
             seterr(l, "bad hello");
             return -1;
         }
-        fresh = p[o++] & 1;
-        {
-            uint8_t sid[LK_SID_LEN];
-            memcpy(sid, p + o, LK_SID_LEN); o += LK_SID_LEN;
-            l->peer_rx = get64(p + o); o += 8;
-            k = p[o++];
-            if (o + k + 1 > n || k >= sizeof mech) { seterr(l, "bad hello"); return -1; }
-            memcpy(mech, p + o, k); mech[k] = '\0'; o += k;
-            k = p[o++];
-            if (o + k + 2 > n || k >= sizeof un) { seterr(l, "bad hello"); return -1; }
-            memcpy(un, p + o, k); un[k] = '\0'; o += k;
-            k = get16(p + o); o += 2;
-            if (o + k > n || k >= sizeof an) { seterr(l, "bad hello"); return -1; }
-            memcpy(an, p + o, k); an[k] = '\0';
-            same = l->have_sid && memcmp(sid, l->sid, LK_SID_LEN) == 0;
-            if (!same && !fresh)
-                status = ST_LOST;                   /* a continuation of a session this end does not have */
-            else if (!same && l->have_sid) {
-                l->ev |= LK_EV_RESET;               /* a new session while the old one lives: the caller starts afresh */
-                seterr(l, "a new session replaces the old one");
-                queue(l, F_CLOSE, (const uint8_t *)"\5reset", 6);
-                l->close_after_flush = 1;
-                return 0;
-            } else
-                status = same ? ST_RESUMED : ST_NEW;
-            if (status != ST_LOST && strcmp(mech, l->secret ? "SCRAM-SHA-256" : "EXTERNAL") != 0) {
-                seterr(l, "the dialer's authentication mechanism is not the one this end requires");
-                status = ST_REFUSED;
-            }
-            if (status == ST_NEW) {
-                memcpy(l->sid, sid, LK_SID_LEN);
-                l->have_sid = 1;
-                snprintf(l->uname, sizeof l->uname, "%s", un);
-                snprintf(l->aname, sizeof l->aname, "%s", an);
-            }
-        }
+        l->hp_fresh = p[o++] & 1;
+        memcpy(l->hp_sid, p + o, LK_SID_LEN); o += LK_SID_LEN;
+        l->hp_rx = get64(p + o); o += 8;
+        k = p[o++];
+        if (o + k + 1 > n || k >= sizeof mech) { seterr(l, "bad hello"); return -1; }
+        memcpy(mech, p + o, k); mech[k] = '\0'; o += k;
+        k = p[o++];
+        if (o + k + 2 > n || k >= sizeof l->hp_un) { seterr(l, "bad hello"); return -1; }
+        memcpy(l->hp_un, p + o, k); l->hp_un[k] = '\0'; o += k;
+        k = get16(p + o); o += 2;
+        if (o + k > n || k >= sizeof l->hp_an) { seterr(l, "bad hello"); return -1; }
+        memcpy(l->hp_an, p + o, k); l->hp_an[k] = '\0';
         l->got_hello = 1;
-        if (status == ST_NEW || status == ST_RESUMED) {
-            if (status == ST_NEW && l->peer_rx != 0)
-                status = ST_LOST;
-            if (l->peer_rx < l->tx_acked || l->peer_rx > l->tx_total)
-                status = ST_LOST;
-        }
-        reply[0] = status;
-        put64(reply + 1, l->rx_total);
-        if (queue(l, F_STATUS, reply, sizeof reply) < 0)
-            return -1;
-        if (status == ST_LOST || status == ST_REFUSED) {
+        if (strcmp(mech, l->secret ? "SCRAM-SHA-256" : "EXTERNAL") != 0) {
+            /* answered at once: it tells the peer nothing about the session and changes nothing */
+            seterr(l, "the dialer's authentication mechanism is not the one this end requires");
+            reply[0] = ST_REFUSED;
+            put64(reply + 1, 0);
+            if (queue(l, F_STATUS, reply, sizeof reply) < 0)
+                return -1;
             l->close_after_flush = 1;
             return 0;
         }
-        ack_to(l, l->peer_rx);
-        become_up(l);
-        if (status == ST_NEW)
-            l->ev |= LK_EV_NEW;
+        if (!l->secret)
+            return decide_hello(l);
+        lk_auth_free(l->auth);
+        if (!(l->auth = lk_auth_new(l->secret, 1))) {
+            seterr(l, "out of memory");
+            return -1;
+        }
+        l->hp_pending = 1;                          /* decided when the proof has been checked (F_AUTH) */
+        return 0;
+    }
+    case F_AUTH: {
+        uint8_t out[512];
+        size_t k;
+        int done;
+        if (l->state != LK_S_HANDSHAKE || !l->auth || l->auth_done || (l->role == LK_ACCEPTOR && !l->hp_pending)) {
+            seterr(l, "unexpected authentication");
+            return -1;
+        }
+        if (lk_auth_step(l->auth, p, n, out, sizeof out, &k, &done) < 0) {
+            seterr(l, "authentication failed");
+            if (l->role == LK_ACCEPTOR) {           /* nothing about the session changes: just end the carrier */
+                l->hp_pending = 0;
+                queue(l, F_CLOSE, (const uint8_t *)"\4auth", 5);
+                l->close_after_flush = 1;
+                return 0;
+            }
+            return -1;
+        }
+        if (k && queue(l, F_AUTH, out, k) < 0)
+            return -1;
+        if (done) {
+            l->auth_done = 1;
+            if (l->role == LK_ACCEPTOR)
+                return decide_hello(l);
+        }
         return 0;
     }
     case F_STATUS: {
         if (l->role != LK_DIALER || l->state != LK_S_HANDSHAKE || n != 9) {
             seterr(l, "unexpected status");
+            return -1;
+        }
+        if (l->secret && !l->auth_done) {           /* an end that has not proved the secret decides nothing here */
+            seterr(l, "the other end answered without proving the secret");
             return -1;
         }
         if (p[0] == ST_LOST) {

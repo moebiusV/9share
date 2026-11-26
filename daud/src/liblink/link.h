@@ -39,7 +39,9 @@ void  lk_free(lk_t *l);                       /* closes an attached carrier */
 
 /* dialer: begin a session with a new random id, to be shown to the acceptor as UNAME and ANAME (what the mount asks diod for) */
 int   lk_begin(lk_t *l, const char *uname, const char *aname);
-/* a secret turns on SCRAM-SHA-256 for the handshake (both ends must have the same); NULL: EXTERNAL, which trusts the carrier */
+/* a secret turns on SCRAM-SHA-256 for the handshake (both ends must have the same; each proves it to the other on every
+ * carrier, and an acceptor changes no session state for a peer that cannot); NULL: EXTERNAL, which trusts the carrier.
+ * Call before lk_attach. */
 int   lk_set_secret(lk_t *l, const char *secret);
 
 /* the carrier: attach a connected descriptor (the engine makes it non-blocking and closes it when it is lost); then poll it for
