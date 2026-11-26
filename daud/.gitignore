@@ -57,3 +57,10 @@ Makefile
 *.diff
 core.*
 *.tar.gz
+
+# daud: the program (upstream's was named diod), the test programs, and what the tests leave
+/src/cmd/daud
+/src/*/test_*
+/config/tap-driver.sh
+/t/test-results/
+/t/trash-directory.*

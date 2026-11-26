@@ -1,0 +1,12 @@
+[Unit]
+Description=p9share: share directories over 9P through ssh, and mount the ones sent to this machine
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=@bindir@/p9share boot
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

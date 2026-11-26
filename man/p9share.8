@@ -1,0 +1,130 @@
+.TH P9SHARE 8 "2026" "p9share" "System Administration"
+.SH NAME
+p9share \- share directories between machines over 9P, through ssh
+.SH SYNOPSIS
+.B p9share export
+.I DIR HOST
+.RI [ NAME ]
+.br
+.B p9share unexport
+.I NAME
+.br
+.B sudo p9share mount
+.I USER NAME DIR
+.br
+.B sudo p9share unmount
+.I NAME
+.br
+.B p9share
+.BR rw | ro | off
+.I NAME
+.br
+.B p9share status
+.br
+.B sudo p9share wsl\-boot
+.br
+.B p9share boot
+.RB [ \-\-detach ]
+.br
+.B p9share serve
+.SH DESCRIPTION
+.B p9share
+makes a directory on one machine appear on another, with the kernel's 9p client, through an ssh tunnel that the machine with the
+files opens.  The machine that shows the files needs no open port.  Install the same package on both machines; a machine is an
+exporter, a receiver or both, according to what is configured on it, and does nothing until something is.
+.PP
+The server is
+.BR daud (8),
+a fork of diod, run as the exporting user.
+.SS On the machine that has the files (as an ordinary user)
+.TP
+.BI "export " "DIR HOST " [ NAME ]
+Share DIR with HOST (a name as ssh knows it) as NAME, by default the directory's own name.  The block is added to
+.IR ~/.config/p9share/p9share.conf ;
+the running service notices within a few seconds.  Prints the command to run on HOST.
+.TP
+.BI unexport " NAME"
+Stop sharing it.
+.SS On the machine that shows them
+.TP
+.BI "mount " "USER NAME DIR"
+(root) Show the share NAME that arrives in the account USER of this machine (the account the exporter logs in as) at DIR.  The block
+is added to
+.IR /etc/p9share/p9share.conf .
+It is mounted while the exporter's tunnel is up and unmounted while it is not.
+.TP
+.BI unmount " NAME"
+(root) Remove it and unmount.
+.TP
+.BR rw | ro | off " \fINAME\fP"
+(as USER, no sudo) Mounted read-write (the default), read-only, or not mounted.  Follows within a few seconds.
+.SS On either
+.TP
+.B status
+What is shared, what is mounted, and whether the daemon runs.
+.TP
+.B wsl\-boot
+(root, WSL2) Put the daemon in the [boot] command of
+.IR /etc/wsl.conf ,
+which WSL2 has instead of systemd.  A command already there is kept and runs first, from
+.IR /etc/p9share/wsl\-boot .
+.SS Behind these
+.TP
+.B boot
+The root daemon, run by the
+.B p9share
+service (or with
+.BR \-\-detach ,
+in the background, logging to /var/log/p9share.log).  Every two seconds it starts
+.B serve
+for each user who has a configuration file and no
+.B serve
+running, and makes the mounts of the system configuration agree with the tunnels and the users' modes.  A mount whose tunnel has
+died is unmounted lazily and mounted again when the tunnel is back.
+.TP
+.B serve
+One user's exports, in the foreground.  For each export it runs
+.B daud
+(as that user, on a private unix socket in
+.IR ~/.local/state/p9share/NAME/ )
+and
+.BR "ssh \-R" ,
+which puts that socket at
+.I ~/.p9share/NAME.sock
+on HOST.  Each is started again when it dies, after 1, 2, 4 ... 30 seconds; ssh runs with ServerAliveInterval 15 and
+ServerAliveCountMax 3, so a dead link is noticed in about 45 seconds.  Before it starts ssh it prepares HOST: it makes
+.IR ~/.p9share ,
+removes the stale socket a dead tunnel left, and writes
+.I ~/.p9share/NAME.info
+with the user name and directory that the mount asks daud for.  The configuration file is read again whenever it changes, and only
+the exports whose block changed are restarted.
+.SH SECURITY
+Mounts are made nosuid,nodev, with access=any: any user on the receiving machine who can reach the mount point sees the files with
+the exporting user's rights.  The mount is only made from a socket that belongs to USER and that answers, and every value that goes
+from the exporter's files into a mount option is checked first.  Do not export a directory to a machine whose users you do not trust.
+.SH ENVIRONMENT
+.TP
+.B P9SHARE_SYSCONFDIR
+Where the system configuration is looked for (default: the sysconfdir given to configure, plus /p9share).  For tests.
+.TP
+.B P9SHARE_DAUD
+The daud program to run (default: the one installed with p9share).  For tests.
+.SH FILES
+.TP
+.I ~/.config/p9share/p9share.conf
+.TQ
+.I /etc/p9share/p9share.conf
+The exports of a user and the mounts of a machine.  See
+.BR p9share.conf (5).
+.TP
+.I ~/.config/p9share/mode.d/NAME
+The mode (rw, ro, off) of a mount, written by
+.BR "p9share rw|ro|off" .
+.TP
+.I ~/.p9share/
+On the receiving machine: the socket and the .info file of each share.
+.SH SEE ALSO
+.BR p9share.conf (5),
+.BR daud (8),
+.BR ssh (1),
+.BR mount (8)

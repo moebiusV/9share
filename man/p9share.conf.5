@@ -1,0 +1,73 @@
+.TH P9SHARE.CONF 5 "2026" "p9share" "File Formats"
+.SH NAME
+p9share.conf \- what a machine shares and what it shows, for p9share
+.SH DESCRIPTION
+The configuration of
+.BR p9share (8)
+is written in obconf, the notation of the OpenBSD daemons' configuration files: keywords and their arguments, braces for a
+block, words that may be put in double quotes, and
+.B #
+for a comment that runs to the end of the line.  There are two files, with the same format.  An
+.B export
+block belongs in the user's
+.I ~/.config/p9share/p9share.conf
+(or
+.IR $XDG_CONFIG_HOME/p9share/p9share.conf ),
+a
+.B mount
+block in
+.IR /etc/p9share/p9share.conf .
+.PP
+.B p9share export
+and
+.B p9share mount
+write the blocks (and
+.B unexport
+and
+.B unmount
+take them away) without changing anything else in the file, so comments and the layout the author gave it stay.
+The files may be edited by hand; the daemon notices within a few seconds.
+.SS export
+.nf
+export "projects" {
+        directory /srv/projects
+        host bob.example.org
+}
+.fi
+.TP
+.I name
+(after the word
+.BR export )
+Letters, digits and . _ \- (not starting with . _ \-), at most 64.  The receiving machine uses the same name.
+.TP
+.B directory
+The directory to share: an absolute path of letters, digits and . _ + @ \- / (no spaces).  Required.
+.TP
+.B host
+Where to send it, as
+.BR ssh (1)
+knows it: a name from ~/.ssh/config, or user@host.  ssh must work from this machine to it without a password.  Required.
+.SS mount
+.nf
+mount "projects" {
+        user alice
+        at /mnt/projects
+}
+.fi
+.TP
+.I name
+The name the exporter gave the share.
+.TP
+.B user
+The account on this machine that the exporting machine logs in as.  The share arrives in that account's
+.IR ~/.p9share/ .
+Required.
+.TP
+.B at
+The mount point: an absolute path of letters, digits and . _ + @ \- / (no spaces), created if it is missing.  Required.
+.PP
+A name may be used once in a file, and a mount point once.  A block with a mistake in it is reported as
+.IR file:line:\ message
+and left out; the other blocks are used.  A mount point that already holds something that is not 9p is left alone.
+.SH SEE ALSO
+.BR p9share (8)
