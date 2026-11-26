@@ -1,5 +1,5 @@
 /* util.c -- logging, paths, files, running programs, and editing the text of a config file. */
-#include "p9share.h"
+#include "9share.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -26,7 +26,7 @@ void p9_log(const char *fmt, ...)
     va_end(ap);
     localtime_r(&t, &tm);
     strftime(ts, sizeof ts, "%Y-%m-%d %H:%M:%S", &tm);
-    fprintf(stderr, "%s p9share: %s\n", ts, msg);
+    fprintf(stderr, "%s 9share: %s\n", ts, msg);
     if (geteuid() == 0)
         syslog(LOG_INFO, "%s", msg);
 }
@@ -34,42 +34,42 @@ void p9_log(const char *fmt, ...)
 const char *p9_sysconf_dir(void)
 {
     static char buf[P9_LINE];
-    const char *e = getenv("P9SHARE_SYSCONFDIR");
+    const char *e = getenv("NINESHARE_SYSCONFDIR");
     if (e && *e)
         return e;
-    snprintf(buf, sizeof buf, "%s/p9share", P9SHARE_SYSCONFDIR);
+    snprintf(buf, sizeof buf, "%s/9share", NINESHARE_SYSCONFDIR);
     return buf;
 }
 
 const char *p9_daud(void)
 {
-    const char *e = getenv("P9SHARE_DAUD");
-    return e && *e ? e : P9SHARE_DAUD;
+    const char *e = getenv("NINESHARE_DAUD");
+    return e && *e ? e : NINESHARE_DAUD;
 }
 
 void p9_user_conf_path(const char *home, char *buf, size_t n)
 {
     const char *x = home ? NULL : getenv("XDG_CONFIG_HOME");
     if (home)
-        snprintf(buf, n, "%s/.config/p9share/p9share.conf", home);
+        snprintf(buf, n, "%s/.config/9share/9share.conf", home);
     else if (x && *x)
-        snprintf(buf, n, "%s/p9share/p9share.conf", x);
+        snprintf(buf, n, "%s/9share/9share.conf", x);
     else
-        snprintf(buf, n, "%s/.config/p9share/p9share.conf", getenv("HOME") ? getenv("HOME") : ".");
+        snprintf(buf, n, "%s/.config/9share/9share.conf", getenv("HOME") ? getenv("HOME") : ".");
 }
 
 void p9_system_conf_path(char *buf, size_t n)
 {
-    snprintf(buf, n, "%s/p9share.conf", p9_sysconf_dir());
+    snprintf(buf, n, "%s/9share.conf", p9_sysconf_dir());
 }
 
 void p9_state_dir(char *buf, size_t n)
 {
     const char *x = getenv("XDG_STATE_HOME");
     if (x && *x)
-        snprintf(buf, n, "%s/p9share", x);
+        snprintf(buf, n, "%s/9share", x);
     else
-        snprintf(buf, n, "%s/.local/state/p9share", getenv("HOME") ? getenv("HOME") : ".");
+        snprintf(buf, n, "%s/.local/state/9share", getenv("HOME") ? getenv("HOME") : ".");
 }
 
 int p9_mkdir_p(const char *path, mode_t mode)
@@ -244,7 +244,7 @@ char *p9_self(void)
     char buf[P9_LINE];
     ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
     if (n <= 0)
-        return strdup("p9share");
+        return strdup("9share");
     buf[n] = '\0';
     return strdup(buf);
 }
@@ -354,7 +354,7 @@ out:
 
 void p9_mode_path(const char *home, const char *name, char *buf, size_t n)
 {
-    snprintf(buf, n, "%s/.config/p9share/mode.d/%s", home, name);
+    snprintf(buf, n, "%s/.config/9share/mode.d/%s", home, name);
 }
 
 const char *p9_mode_of(const char *home, const char *name)

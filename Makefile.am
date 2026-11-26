@@ -1,11 +1,11 @@
 SUBDIRS = daud src man tests
 
 if INSTALL_UNIT
-systemdsystemunit_DATA = systemd/p9share.service
+systemdsystemunit_DATA = systemd/9share.service
 endif
 
 EXTRA_DIST = README INSTALL HACKING NEWS ChangeLog AUTHORS COPYING \
-             grammars/p9share.hbnf tools/regen-conf.sh systemd/p9share.service.in \
+             grammars/9share.hbnf tools/regen-conf.sh systemd/9share.service.in \
              docs/index.md docs/_config.yml debian/control debian/rules debian/changelog debian/copyright debian/docs debian/source/format
 
 # the Debian package, built from a clean copy of the source

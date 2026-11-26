@@ -8170,7 +8170,7 @@ fi
 ##
 # Epilogue
 ##
-ac_config_files="$ac_config_files Makefile src/libtap/Makefile src/libtest/Makefile src/libdiod/Makefile src/liblsd/Makefile src/libnpfs/Makefile src/libnpclient/Makefile man/Makefile man/daud.8 src/cmd/Makefile src/Makefile t/Makefile"
+ac_config_files="$ac_config_files Makefile src/libtap/Makefile src/libtest/Makefile src/libdiod/Makefile src/liblsd/Makefile src/libnpfs/Makefile src/libnpclient/Makefile src/liblink/Makefile man/Makefile man/daud.8 src/cmd/Makefile src/Makefile t/Makefile"
 
 
 cat >confcache <<\_ACEOF
@@ -8956,6 +8956,7 @@ do
     "src/liblsd/Makefile") CONFIG_FILES="$CONFIG_FILES src/liblsd/Makefile" ;;
     "src/libnpfs/Makefile") CONFIG_FILES="$CONFIG_FILES src/libnpfs/Makefile" ;;
     "src/libnpclient/Makefile") CONFIG_FILES="$CONFIG_FILES src/libnpclient/Makefile" ;;
+    "src/liblink/Makefile") CONFIG_FILES="$CONFIG_FILES src/liblink/Makefile" ;;
     "man/Makefile") CONFIG_FILES="$CONFIG_FILES man/Makefile" ;;
     "man/daud.8") CONFIG_FILES="$CONFIG_FILES man/daud.8" ;;
     "src/cmd/Makefile") CONFIG_FILES="$CONFIG_FILES src/cmd/Makefile" ;;

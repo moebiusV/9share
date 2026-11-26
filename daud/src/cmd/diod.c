@@ -42,6 +42,7 @@
 #include "src/libdiod/diod_log.h"
 #include "src/libdiod/diod_conf.h"
 #include "src/libdiod/diod_sock.h"
+#include "src/libdiod/diod_link.h"
 #if WITH_RDMA
 #include "src/libdiod/diod_rdma.h"
 #endif
@@ -52,17 +53,23 @@
 #include "src/libnpfs/ganesha-syscalls.h"
 #endif
 
-typedef enum { SRV_FILEDES, SRV_SOCKTEST, SRV_NORMAL } srvmode_t;
+typedef enum { SRV_FILEDES, SRV_SOCKTEST, SRV_NORMAL, SRV_DIAL } srvmode_t;
+
+/* --dial: serve one connection over a resumable link whose carrier is a command we run (daud's own addition) */
+static char *dial_cmd = NULL;
+static int   dial_hold = 600;
+static char *link_secret = NULL;
 
 static void          _setrlimit (void);
 static void          _become_user (char *name, uid_t uid);
 static void          _service_run (srvmode_t mode, int rfdno, int wfdno);
+static char         *_read_secret (const char *path);
 
 #ifndef NR_OPEN
 #define NR_OPEN         1048576 /* works on RHEL 5 x86_64 arch */
 #endif
 
-static const char *options = "fr:w:d:l:t:e:Eo:u:SL:nHpc:NU:sv";
+static const char *options = "fr:w:d:l:t:e:Eo:u:SL:nHpc:NU:sv";   /* --dial, --hold and --link-secret-file have no short form */
 
 static const struct option longopts[] = {
     {"foreground",         no_argument,        0, 'f'},
@@ -85,6 +92,9 @@ static const struct option longopts[] = {
     {"config-file",        required_argument,  0, 'c'},
     {"socktest",           no_argument,        0, 's'},
     {"version",            no_argument,        0, 'v'},
+    {"dial",               required_argument,  0, 0x100},
+    {"hold",               required_argument,  0, 0x101},
+    {"link-secret-file",   required_argument,  0, 0x102},
     {0, 0, 0, 0},
 };
 
@@ -112,6 +122,10 @@ usage()
 "   -d,--debug MASK         set debugging mask\n"
 "   -c,--config-file FILE   set config file path\n"
 "   -s,--socktest           run in test mode where server exits early\n"
+"   --dial COMMAND          serve one export over a resumable link: run COMMAND (with its\n"
+"                           stdin and stdout as the link) and again when it dies\n"
+"   --hold SECONDS          how long a connection waits for a new carrier (default 600)\n"
+"   --link-secret-file FILE authenticate the link with SCRAM-SHA-256, the secret in FILE\n"
 "   -v,--version            show diod version and configuration information\n"
     );
     exit (1);
@@ -174,6 +188,18 @@ main(int argc, char **argv)
         switch (c) {
             case 'f':   /* --foreground */
                 /* no-op; this is the default now */
+                break;
+            case 0x100: /* --dial COMMAND */
+                mode = SRV_DIAL;
+                dial_cmd = optarg;
+                break;
+            case 0x101: /* --hold SECONDS */
+                dial_hold = (int)strtol (optarg, NULL, 10);
+                if (dial_hold < 1)
+                    msg_exit ("--hold wants a number of seconds");
+                break;
+            case 0x102: /* --link-secret-file FILE */
+                link_secret = _read_secret (optarg);
                 break;
             case 'r':   /* --rfdno */
                 mode = SRV_FILEDES;
@@ -263,6 +289,8 @@ main(int argc, char **argv)
         msg_exit ("--runas-uid and allsquash cannot be used together");
     if (mode == SRV_FILEDES && (rfdno == -1 || wfdno == -1))
         msg_exit ("--rfdno,wfdno must be used together");
+    if (mode == SRV_DIAL && !diod_conf_opt_exports ())
+        msg_exit ("--dial serves one export: give it with --export");
 #ifndef AUTH
     if (diod_conf_get_auth_required ()) {
         msg_exit ("daud was built without authentication support."
@@ -408,6 +436,29 @@ _sighand (int sig)
 
 /* Thread to handle SIGHUP, SIGTERM, and new connections on listen ports.
  */
+static const char *_geteuser (void);
+
+/* the first line of FILE, which only its owner may read */
+static char *
+_read_secret (const char *path)
+{
+    struct stat st;
+    char line[512], *nl, *s;
+    FILE *f = fopen (path, "r");
+
+    if (!f || fstat (fileno (f), &st) < 0)
+        msg_exit ("cannot read %s", path);
+    if ((st.st_mode & 077) != 0)
+        msg_exit ("%s must not be readable by anyone but its owner", path);
+    if (!fgets (line, sizeof line, f) || !(nl = strpbrk (line, "\r\n")))
+        msg_exit ("%s must hold the secret on its first line", path);
+    *nl = '\0';
+    fclose (f);
+    if (!(s = strdup (line)) || !*s)
+        msg_exit ("%s holds no secret", path);
+    return s;
+}
+
 static void *
 _service_loop (void *arg)
 {
@@ -424,6 +475,12 @@ _service_loop (void *arg)
         case SRV_FILEDES:
             diod_sock_startfd (ss.srv, ss.rfdno, ss.wfdno, "stdin", 0);
             break;
+        case SRV_DIAL: {
+            Export *x = list_peek (diod_conf_get_exports ());
+            diod_link_run (ss.srv, dial_cmd, dial_hold, _geteuser (), x->path,
+                           link_secret, &ss.shutdown, &sigs);
+            break;
+        }
         case SRV_NORMAL:
         case SRV_SOCKTEST:
             break;
@@ -582,6 +639,7 @@ _service_run (srvmode_t mode, int rfdno, int wfdno)
     ss.nfds = 0;
     switch (mode) {
         case SRV_FILEDES:
+        case SRV_DIAL:
             break;
         case SRV_NORMAL:
         case SRV_SOCKTEST:
@@ -693,6 +751,7 @@ _service_run (srvmode_t mode, int rfdno, int wfdno)
             pthread_kill (ss.t, SIGUSR1);
             break;
         case SRV_NORMAL:
+        case SRV_DIAL:
             break;
     }
     if ((n = pthread_join (ss.t, NULL)))

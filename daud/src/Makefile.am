@@ -4,5 +4,6 @@ SUBDIRS = \
 	liblsd \
 	libnpfs \
 	libnpclient \
+	liblink \
 	libdiod \
 	cmd

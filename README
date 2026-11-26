@@ -1,12 +1,12 @@
-p9share -- share directories between machines over 9P, through ssh
+9share -- share directories between machines over 9P, through ssh
 
 On the machine that has the files, as yourself:
 
-    p9share export /srv/projects bob.example.org
+    9share export /srv/projects bob.example.org
 
 On the machine that should show them, once:
 
-    sudo p9share mount alice projects /mnt/projects
+    sudo 9share mount alice projects /mnt/projects
 
 That is all.  The machine with the files dials out to the other with ssh, so the
 machine that shows them needs no open port and no server for you to configure.  A
@@ -14,31 +14,31 @@ daemon that starts at boot keeps the tunnel up (starting it again when it drops)
 keeps the mount right: mounted while the tunnel is there, unmounted when it is not.
 The user on the receiving machine switches it without sudo:
 
-    p9share ro projects        read-only
-    p9share rw projects        read-write
-    p9share off projects       not mounted
+    9share ro projects        read-only
+    9share rw projects        read-write
+    9share off projects       not mounted
 
-    p9share status             what is shared, what is mounted, what is running
+    9share status             what is shared, what is mounted, what is running
 
 Several directories, several machines, and both directions at once are each one more
 block of configuration.  Nothing happens on a machine until something is configured on it.
 
 The configuration is two small files in obconf, the notation of the OpenBSD daemons'
-config files (p9share.conf(5)); the commands above write it, and you may edit it by hand:
+config files (9share.conf(5)); the commands above write it, and you may edit it by hand:
 
-    export "projects" {             # ~/.config/p9share/p9share.conf, where the files are
+    export "projects" {             # ~/.config/9share/9share.conf, where the files are
         directory /srv/projects
         host bob.example.org
     }
 
-    mount "projects" {              # /etc/p9share/p9share.conf, where they are shown
+    mount "projects" {              # /etc/9share/9share.conf, where they are shown
         user alice
         at /mnt/projects
     }
 
-How it works: p9share runs daud, a 9P2000.L file server (a fork of diod, in this
+How it works: 9share runs daud, a 9P2000.L file server (a fork of diod, in this
 package), as you, unprivileged, on a private unix socket, and ssh -R hands that socket
-to the other machine, into the user's ~/.p9share/.  The root daemon there mounts it with
+to the other machine, into the user's ~/.9share/.  The root daemon there mounts it with
 the kernel's 9p client.
 
 Requirements: Linux with the 9p module (Debian, Ubuntu, WSL2 and others), openssh-client,
@@ -50,7 +50,7 @@ nosuid,nodev.  The socket on the receiving machine belongs to that machine's use
 mounted only if it answers; any local user there who can reach the mount point sees the
 files as you.  Do not export a directory to a machine whose users you do not trust.
 
-On WSL2 there is no systemd: sudo p9share wsl-boot puts the daemon in /etc/wsl.conf.
+On WSL2 there is no systemd: sudo 9share wsl-boot puts the daemon in /etc/wsl.conf.
 
-See INSTALL, HACKING, p9share(8), p9share.conf(5), daud(8).
-License: GPL-2.0-or-later for p9share; daud is diod's licence (GPL-2, with libnpfs MIT-like), see COPYING and daud/COPYING.
+See INSTALL, HACKING, 9share(8), 9share.conf(5), daud(8).
+License: GPL-2.0-or-later for 9share; daud is diod's licence (GPL-2, with libnpfs MIT-like), see COPYING and daud/COPYING.

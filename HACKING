@@ -1,18 +1,18 @@
-Working on p9share
+Working on 9share
 
 Layout
-  src/              p9share: main.c (the commands' names), cmds.c (export, mount, status ...), serve.c (the exporter), boot.c (the root
+  src/              9share: main.c (the commands' names), cmds.c (export, mount, status ...), serve.c (the exporter), boot.c (the root
                     daemon and the mounts), util.c (files, paths, running programs, editing a config file's text), conf.c (the checks)
-  src/p9share_conf.c   the parser of p9share.conf: GENERATED, see below; src/hbnf_conf.{c,h} are its runtime support
-  grammars/         p9share.hbnf, the grammar of p9share.conf
+  src/9share_conf.c   the parser of 9share.conf: GENERATED, see below; src/hbnf_conf.{c,h} are its runtime support
+  grammars/         9share.hbnf, the grammar of 9share.conf
   daud/             daud, the 9P server: diod v1.1.0 (git subtree of upstream, history kept) with our changes
   tests/            C tests and shell tests, run by `make check`
   man/, systemd/, debian/
 
-The parser of p9share.conf
-  src/p9share_conf.c is made by hbnf, the parser generator meta compiler (https://github.com/moebiusV/hbnf), from grammars/p9share.hbnf.
-  It is committed, and the build never needs hbnf.  To change what p9share.conf can say:
-    1. edit grammars/p9share.hbnf (a keyword, its argument, and the action that fills struct p9share_conf, declared in src/p9share_conf.h);
+The parser of 9share.conf
+  src/9share_conf.c is made by hbnf, the parser generator meta compiler (https://github.com/moebiusV/hbnf), from grammars/9share.hbnf.
+  It is committed, and the build never needs hbnf.  To change what 9share.conf can say:
+    1. edit grammars/9share.hbnf (a keyword, its argument, and the action that fills struct nineshare_conf, declared in src/9share_conf.h);
     2. add the check to src/conf.c if a value needs one, and a test to tests/test_conf.c;
     3. build hbnf (git clone https://github.com/moebiusV/hbnf; gprbuild -P hbnf.gpr; on a system without the static Ada runtime
        link it dynamically by removing "-static" from a copy of hbnf.gpr) and run

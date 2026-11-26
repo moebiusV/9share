@@ -4,7 +4,7 @@
 # users' names (lower case: the author's name as author and copyright holder is not a user name) and $HOME; and, in the
 # package's own files (not upstream daud's, which carry their authors' own notices), home paths and mail addresses.
 # Skipped outside a git checkout.
-SRC=${P9SHARE_SRCDIR:-$(dirname "$0")/..}
+SRC=${NINESHARE_SRCDIR:-$(dirname "$0")/..}
 cd "$SRC" || exit 77
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 77
 pats=$(

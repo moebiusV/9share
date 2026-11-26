@@ -1,25 +1,25 @@
-; p9share.conf -- the configuration file of p9share(8), as an hbnf grammar over obconf.
+; 9share.conf -- the configuration file of 9share(8), as an hbnf grammar over obconf.
 ;
-; This is the source of src/p9share_conf.c, which was generated from it by the hbnf parser
+; This is the source of src/9share_conf.c, which was generated from it by the hbnf parser
 ; generator meta compiler (https://github.com/moebiusV/hbnf).  The package does not need hbnf to be
 ; built: the generated file is committed.  To regenerate it see HACKING; in short, the grammar is
 ; self-contained (it includes no other file):
 ;
-;     hbnf grammars/p9share.hbnf --backend=c > p9share_conf.c
+;     hbnf grammars/9share.hbnf --backend=c > 9share_conf.c
 ;
 ; and the runtime it links, hbnf's runtime/hbnf_conf.c and hbnf_conf.h, are in src/.
 ;
 ; The notation is obconf's: a block is a keyword, a name, and its settings between braces, a
 ; setting is a keyword and its argument, ended by the end of the line; strings may be put in double
-; quotes; `#` starts a comment.  The meaning is in p9share.conf(5).  One grammar reads both files:
-; an `export` block belongs in a user's ~/.config/p9share/p9share.conf and a `mount` block in
-; /etc/p9share/p9share.conf; the program that reads a file uses the blocks that belong to it.
+; quotes; `#` starts a comment.  The meaning is in 9share.conf(5).  One grammar reads both files:
+; an `export` block belongs in a user's ~/.config/9share/9share.conf and a `mount` block in
+; /etc/9share/9share.conf; the program that reads a file uses the blocks that belong to it.
 
 language C
 prefix none
 statements
 keywords {
-    export mount directory host user at
+    export mount directory host user at hold
 }
 layout tailq
 ; phrase rules skip `ws` between their elements; character rules never do (defined below)
@@ -29,20 +29,20 @@ whitespace ws
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
-#include "p9share_conf.h"
+#include "9share_conf.h"
 #include "hbnf_conf.h"
 
-/* the configuration being filled in (p9share_conf_parse sets it) */
-static struct p9share_conf *conf;
+/* the configuration being filled in (nineshare_conf_parse sets it) */
+static struct nineshare_conf *conf;
 
 static char *dup_or_die(const char *v) {
     char *s = strdup(v);
-    if (s == NULL) { perror("p9share"); exit(1); }
+    if (s == NULL) { perror("9share"); exit(1); }
     return s;
 }
 }
 
-; -- p9share.conf ---------------------------------------------------------------------------
+; -- 9share.conf ---------------------------------------------------------------------------
 
 config = | config entry
 
@@ -52,44 +52,60 @@ entry  = "export" string "{" exportopts "}"
 exportopts = | exportopts exportopt
 exportopt  = "directory" string
            | "host" string
+           | "hold" int
 
 mountopts  = | mountopts mountopt
 mountopt   = "user" string
            | "at" string
+           | "hold" int
 
 ; the checks and the effect of each block, in the order of the file; an error drops the block
 action entry {
     if (n->kind == ENTRY_EXPORT) {
-        struct p9share_export e;
+        struct nineshare_export e;
         exportopts_t *o;
         const char *err;
         memset(&e, 0, sizeof e);
         e.name = dup_or_die(n->string);
         e.line = n->_line;
         TAILQ_FOREACH(o, &n->exportopts, _link) {
-            char **dst = o->exportopt.kind == EXPORTOPT_DIRECTORY ? &e.directory : &e.host;
+            char **dst;
+            if (o->exportopt.kind == EXPORTOPT_HOLD) {
+                if (e.hold != 0) { bind_error("each setting may be given once"); goto drop_export; }
+                e.hold = (int)o->exportopt.int_;
+                if (e.hold < 1 || e.hold > 86400) { bind_error("hold is a number of seconds, 1 to 86400"); e.hold = 0; goto drop_export; }
+                continue;
+            }
+            dst = o->exportopt.kind == EXPORTOPT_DIRECTORY ? &e.directory : &e.host;
             if (*dst != NULL) { bind_error("each setting may be given once"); goto drop_export; }
             *dst = dup_or_die(o->exportopt.string);
         }
-        err = p9share_conf_add_export(conf, &e);
+        err = nineshare_conf_add_export(conf, &e);
         if (err == NULL)
             return;
         bind_error("%s", err);
     drop_export:
         free(e.name); free(e.directory); free(e.host);
     } else {
-        struct p9share_mount m;
+        struct nineshare_mount m;
         mountopts_t *o;
         const char *err;
         memset(&m, 0, sizeof m);
         m.name = dup_or_die(n->string);
         m.line = n->_line;
         TAILQ_FOREACH(o, &n->mountopts, _link) {
-            char **dst = o->mountopt.kind == MOUNTOPT_USER ? &m.user : &m.at;
+            char **dst;
+            if (o->mountopt.kind == MOUNTOPT_HOLD) {
+                if (m.hold != 0) { bind_error("each setting may be given once"); goto drop_mount; }
+                m.hold = (int)o->mountopt.int_;
+                if (m.hold < 1 || m.hold > 86400) { bind_error("hold is a number of seconds, 1 to 86400"); m.hold = 0; goto drop_mount; }
+                continue;
+            }
+            dst = o->mountopt.kind == MOUNTOPT_USER ? &m.user : &m.at;
             if (*dst != NULL) { bind_error("each setting may be given once"); goto drop_mount; }
             *dst = dup_or_die(o->mountopt.string);
         }
-        err = p9share_conf_add_mount(conf, &m);
+        err = nineshare_conf_add_mount(conf, &m);
         if (err == NULL)
             return;
         bind_error("%s", err);
@@ -145,11 +161,11 @@ static int hbnf_parse_config(const char *path) {
     return hbnf_conf_run(path);
 }
 
-void p9share_conf_init(struct p9share_conf *c) {
+void nineshare_conf_init(struct nineshare_conf *c) {
     memset(c, 0, sizeof *c);
 }
 
-void p9share_conf_free(struct p9share_conf *c) {
+void nineshare_conf_free(struct nineshare_conf *c) {
     size_t i;
     for (i = 0; i < c->nexports; i++) {
         free(c->exports[i].name); free(c->exports[i].directory); free(c->exports[i].host);
@@ -159,25 +175,25 @@ void p9share_conf_free(struct p9share_conf *c) {
     }
     free(c->exports);
     free(c->mounts);
-    p9share_conf_init(c);
+    nineshare_conf_init(c);
 }
 
 /* hbnf's runtime stops the process at a syntax error unless the program takes the messages itself
-   (hbnf_conf.h): p9share reports every error as "file:line: message" and returns -1. */
-static void p9share_conf_error(size_t line, const char *msg) {
+   (hbnf_conf.h): 9share reports every error as "file:line: message" and returns -1. */
+static void nineshare_conf_error(size_t line, const char *msg) {
     size_t l, col, off;
     int n = 0;
     if (sscanf(msg, "%zu:%zu:%zu: %n", &l, &col, &off, &n) >= 3 && n > 0)
-        fprintf(stderr, "%s:%s\n", conf_file ? conf_file : "p9share.conf", msg);
+        fprintf(stderr, "%s:%s\n", conf_file ? conf_file : "9share.conf", msg);
     else if (line)
-        fprintf(stderr, "%s:%zu: %s\n", conf_file ? conf_file : "p9share.conf", line, msg);
+        fprintf(stderr, "%s:%zu: %s\n", conf_file ? conf_file : "9share.conf", line, msg);
     else
-        fprintf(stderr, "%s: %s\n", conf_file ? conf_file : "p9share.conf", msg);
+        fprintf(stderr, "%s: %s\n", conf_file ? conf_file : "9share.conf", msg);
 }
 
-int p9share_conf_parse(const char *path, struct p9share_conf *c) {
+int nineshare_conf_parse(const char *path, struct nineshare_conf *c) {
     conf = c;
-    conf_error = p9share_conf_error;
+    conf_error = nineshare_conf_error;
     return hbnf_parse_config(path) == -1 ? -1 : 0;
 }
 }

@@ -1,12 +1,12 @@
-/* conf.c -- the checks that p9share.conf's blocks go through, and the list they are added to. */
+/* conf.c -- the checks that 9share.conf's blocks go through, and the list they are added to. */
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
-#include "p9share_conf.h"
+#include "9share_conf.h"
 
 static int alnum(int c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
 
-int p9share_valid_name(const char *s)
+int nineshare_valid_name(const char *s)
 {
     size_t i, n = strlen(s);
     if (n == 0 || n > 64 || !alnum((unsigned char)s[0]))
@@ -17,7 +17,7 @@ int p9share_valid_name(const char *s)
     return 1;
 }
 
-int p9share_valid_user(const char *s)
+int nineshare_valid_user(const char *s)
 {
     size_t i, n = strlen(s);
     if (n == 0 || n > 32 || !((s[0] >= 'a' && s[0] <= 'z') || s[0] == '_'))
@@ -28,7 +28,7 @@ int p9share_valid_user(const char *s)
     return 1;
 }
 
-int p9share_valid_host(const char *s)
+int nineshare_valid_host(const char *s)
 {
     size_t i, n = strlen(s);
     if (n == 0 || n > 255 || !alnum((unsigned char)s[0]))
@@ -39,7 +39,7 @@ int p9share_valid_host(const char *s)
     return 1;
 }
 
-int p9share_valid_path(const char *s)
+int nineshare_valid_path(const char *s)
 {
     size_t i, n = strlen(s);
     if (n == 0 || n > 1024 || s[0] != '/')
@@ -59,16 +59,16 @@ static int grow(void **base, size_t *n, size_t size)
     return 0;
 }
 
-const char *p9share_conf_add_export(struct p9share_conf *c, const struct p9share_export *e)
+const char *nineshare_conf_add_export(struct nineshare_conf *c, const struct nineshare_export *e)
 {
     size_t i;
-    if (!p9share_valid_name(e->name))
+    if (!nineshare_valid_name(e->name))
         return "the name of an export is letters, digits and . _ - (not starting with . _ -)";
     if (e->directory == NULL || e->host == NULL)
         return "an export needs a directory and a host";
-    if (!p9share_valid_path(e->directory))
+    if (!nineshare_valid_path(e->directory))
         return "the directory must be an absolute path of letters, digits and . _ + @ - / (no spaces)";
-    if (!p9share_valid_host(e->host))
+    if (!nineshare_valid_host(e->host))
         return "the host must be a name as ssh knows it (letters, digits and . _ @ : -)";
     for (i = 0; i < c->nexports; i++)
         if (strcmp(c->exports[i].name, e->name) == 0)
@@ -79,16 +79,16 @@ const char *p9share_conf_add_export(struct p9share_conf *c, const struct p9share
     return NULL;
 }
 
-const char *p9share_conf_add_mount(struct p9share_conf *c, const struct p9share_mount *m)
+const char *nineshare_conf_add_mount(struct nineshare_conf *c, const struct nineshare_mount *m)
 {
     size_t i;
-    if (!p9share_valid_name(m->name))
+    if (!nineshare_valid_name(m->name))
         return "the name of a mount is letters, digits and . _ - (not starting with . _ -)";
     if (m->user == NULL || m->at == NULL)
         return "a mount needs a user and an at";
-    if (!p9share_valid_user(m->user))
+    if (!nineshare_valid_user(m->user))
         return "the user must be a login name";
-    if (!p9share_valid_path(m->at))
+    if (!nineshare_valid_path(m->at))
         return "the mount point must be an absolute path of letters, digits and . _ + @ - / (no spaces)";
     for (i = 0; i < c->nmounts; i++) {
         if (strcmp(c->mounts[i].name, m->name) == 0)

@@ -1,26 +1,26 @@
-.TH P9SHARE.CONF 5 "2026" "p9share" "File Formats"
+.TH 9SHARE.CONF 5 "2026" "9share" "File Formats"
 .SH NAME
-p9share.conf \- what a machine shares and what it shows, for p9share
+9share.conf \- what a machine shares and what it shows, for 9share
 .SH DESCRIPTION
 The configuration of
-.BR p9share (8)
+.BR 9share (8)
 is written in obconf, the notation of the OpenBSD daemons' configuration files: keywords and their arguments, braces for a
 block, words that may be put in double quotes, and
 .B #
 for a comment that runs to the end of the line.  There are two files, with the same format.  An
 .B export
 block belongs in the user's
-.I ~/.config/p9share/p9share.conf
+.I ~/.config/9share/9share.conf
 (or
-.IR $XDG_CONFIG_HOME/p9share/p9share.conf ),
+.IR $XDG_CONFIG_HOME/9share/9share.conf ),
 a
 .B mount
 block in
-.IR /etc/p9share/p9share.conf .
+.IR /etc/9share/9share.conf .
 .PP
-.B p9share export
+.B 9share export
 and
-.B p9share mount
+.B 9share mount
 write the blocks (and
 .B unexport
 and
@@ -60,7 +60,7 @@ The name the exporter gave the share.
 .TP
 .B user
 The account on this machine that the exporting machine logs in as.  The share arrives in that account's
-.IR ~/.p9share/ .
+.IR ~/.9share/ .
 Required.
 .TP
 .B at
@@ -70,4 +70,4 @@ A name may be used once in a file, and a mount point once.  A block with a mista
 .IR file:line:\ message
 and left out; the other blocks are used.  A mount point that already holds something that is not 9p is left alone.
 .SH SEE ALSO
-.BR p9share (8)
+.BR 9share (8)

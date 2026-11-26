@@ -1,6 +1,6 @@
 /* cmds.h -- the commands of cmds.c; each takes the arguments after its name and returns the exit status. */
-#ifndef P9SHARE_CMDS_H
-#define P9SHARE_CMDS_H
+#ifndef NINESHARE_CMDS_H
+#define NINESHARE_CMDS_H
 int cmd_export(int argc, char **argv);
 int cmd_unexport(int argc, char **argv);
 int cmd_mount(int argc, char **argv);

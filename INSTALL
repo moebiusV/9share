@@ -1,19 +1,19 @@
-Installing p9share
+Installing 9share
 
 From a checkout:    ./autogen.sh && ./configure && make && make check && sudo make install
 From a tarball:     ./configure && make && make check && sudo make install
-As a package:       make deb && sudo apt install ./debbuild/p9share_*_*.deb
+As a package:       make deb && sudo apt install ./debbuild/9share_*_*.deb
 
 Install it on both machines.  Then:
 
-  the machine with the files (as yourself):    p9share export DIR HOST [NAME]
-  the machine that shows them:                 sudo p9share mount USER NAME DIR
+  the machine with the files (as yourself):    9share export DIR HOST [NAME]
+  the machine that shows them:                 sudo 9share mount USER NAME DIR
 
-  (USER is the account on the receiving machine that the exporter logs in to.  `p9share export` prints the line to run there.)
+  (USER is the account on the receiving machine that the exporter logs in to.  `9share export` prints the line to run there.)
 
-The p9share service is enabled by the package and started at boot (sudo systemctl start p9share to start it now).
-From `make install` it is installed but you enable it yourself:  sudo systemctl enable --now p9share
-On WSL2 (no systemd):   sudo p9share wsl-boot      then restart WSL once (wsl.exe --shutdown), or run  sudo p9share boot --detach
+The 9share service is enabled by the package and started at boot (sudo systemctl start 9share to start it now).
+From `make install` it is installed but you enable it yourself:  sudo systemctl enable --now 9share
+On WSL2 (no systemd):   sudo 9share wsl-boot      then restart WSL once (wsl.exe --shutdown), or run  sudo 9share boot --detach
 
 ssh must work without a password from the machine with the files to the one that shows them:   ssh HOST true
 

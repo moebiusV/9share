@@ -1,12 +1,12 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: p9share
+Upstream-Name: 9share
 Source: https://github.com/moebiusV/9share
 
 Files: *
 Copyright: 2026 David Walther
 License: GPL-2+
 
-Files: src/hbnf_conf.c src/hbnf_conf.h src/p9share_conf.c
+Files: src/hbnf_conf.c src/hbnf_conf.h src/9share_conf.c
 Copyright: 2026 David Walther
 License: ISC
 

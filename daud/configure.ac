@@ -162,6 +162,7 @@ AC_CONFIG_FILES( \
   src/liblsd/Makefile \
   src/libnpfs/Makefile \
   src/libnpclient/Makefile \
+  src/liblink/Makefile \
   man/Makefile \
   man/daud.8 \
   src/cmd/Makefile \

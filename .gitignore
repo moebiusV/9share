@@ -13,8 +13,8 @@ Makefile.in
 # built
 *.o
 *.a
-/src/p9share
-/systemd/p9share.service
+/src/9share
+/systemd/9share.service
 /tests/test_conf
 /tests/test_9p
 *.log
@@ -22,3 +22,6 @@ Makefile.in
 /debbuild/
 *.tar.gz
 .dirstamp
+/tests/test_link
+/tests/test_resume
+*~

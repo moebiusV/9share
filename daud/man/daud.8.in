@@ -8,7 +8,7 @@ daud \- a 9P2000.L file server, a fork of diod
 .B daud
 is a 9P2000.L file server.
 .LP
-daud is a fork of diod (https://github.com/chaos/diod) made for p9share (p9share(8)), which starts it; it needs no configuration file.
+daud is a fork of diod (https://github.com/chaos/diod) made for 9share (9share(8)), which starts it; it needs no configuration file.
 Some configuration can be overridden on the command line, as described below.
 .SH OPTIONS
 .TP

@@ -1,6 +1,6 @@
 /* test.h -- the least a C test needs. */
-#ifndef P9SHARE_TEST_H
-#define P9SHARE_TEST_H
+#ifndef NINESHARE_TEST_H
+#define NINESHARE_TEST_H
 #include <stdio.h>
 #include <stdlib.h>
 static int t_failed, t_run;

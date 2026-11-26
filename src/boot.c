@@ -1,7 +1,11 @@
-/* boot.c -- the root daemon: keeps `p9share serve` running for every user who has exports, and makes the mounts of
- * /etc/p9share/p9share.conf agree with two facts every two seconds: is the exporter's socket there and answering, and what
- * does the user want (rw, ro or off: ~USER/.config/p9share/mode.d/NAME, which the user writes with no sudo). */
-#include "p9share.h"
+/* boot.c -- the root daemon: keeps `9share serve` running for every user who has exports, and keeps each mount of
+ * /etc/9share/9share.conf right.  A mount has a relay (`9share relay`, a process of the mount's user: relay.c) that holds the
+ * link's session and one end of a socket pair; the daemon holds the other end until the relay reports that the exporter's
+ * session began ("NEW"), and then mounts with the kernel's 9p client over that end (trans=fd).  When the exporter's ssh breaks
+ * the mount stays: the relay waits for the next carrier.  When the relay ends (its hold time passed, the exporter began
+ * another session, the kernel let go) the mount is unmounted and a new relay waits.  The user's mode (rw, ro, off:
+ * ~USER/.config/9share/mode.d/NAME, written by `9share rw|ro|off`) is followed every tick. */
+#include "9share.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
@@ -13,13 +17,14 @@
 #include <sys/mount.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
-#include <sys/un.h>
 #include <sys/wait.h>
 #include <syslog.h>
 #include <time.h>
 #include <unistd.h>
 
 #define PB (2 * P9_LINE + 64)
+#define MAXMOUNTS 64
+#define DEFAULT_HOLD 600
 
 static volatile sig_atomic_t stopping;
 
@@ -30,19 +35,17 @@ const char *p9_mount_state_name(int s)
     switch (s) {
     case MS_RW: return "rw";
     case MS_RO: return "ro";
-    case MS_DEAD: return "not answering";
     case MS_OTHER: return "something else is mounted there";
     default: return "not mounted";
     }
 }
 
-/* what is mounted at AT, from /proc/self/mountinfo; MS_DEAD if it is 9p but a stat of it hangs or fails */
+/* what is mounted at AT, from /proc/self/mountinfo (nothing is asked of the mount itself: it may be waiting for a carrier) */
 int p9_mount_state(const char *at)
 {
     char real[P9_LINE], line[2048];
     FILE *f;
     int state = MS_NONE;
-    pid_t pid;
     if (!realpath(at, real))
         snprintf(real, sizeof real, "%s", at);
     if (!(f = fopen("/proc/self/mountinfo", "r")))
@@ -53,15 +56,10 @@ int p9_mount_state(const char *at)
         /* id parent major:minor root mountpoint options [optional fields] - fstype source superoptions */
         for (mp = line, i = 0; i < 4 && mp; i++)
             mp = (sp = strchr(mp, ' ')) ? sp + 1 : NULL;
-        if (!mp)
-            continue;
-        opts = strchr(mp, ' ');
-        if (!opts)
+        if (!mp || !(opts = strchr(mp, ' ')))
             continue;
         *opts++ = '\0';
-        if (strcmp(mp, real) != 0)
-            continue;
-        if (!(sep = strstr(opts, " - ")))
+        if (strcmp(mp, real) != 0 || !(sep = strstr(opts, " - ")))
             continue;
         fstype = sep + 3;
         if ((sp = strchr(fstype, ' ')))
@@ -82,24 +80,6 @@ int p9_mount_state(const char *at)
         }
     }
     fclose(f);
-    if (state == MS_RW || state == MS_RO) {         /* a dead tunnel leaves a mount whose stat hangs: ask a child, with a timeout */
-        pid = fork();
-        if (pid == 0) {
-            struct stat st;
-            _exit(stat(real, &st) == 0 ? 0 : 1);
-        }
-        if (pid > 0) {
-            int st = 0, i;
-            pid_t r = 0;
-            for (i = 0; i < 50 && (r = waitpid(pid, &st, WNOHANG)) == 0; i++)
-                usleep(100000);
-            if (r == 0) {
-                kill(pid, SIGKILL);                 /* it may stay in the kernel; it is no longer ours to wait for */
-                state = MS_DEAD;
-            } else if (!WIFEXITED(st) || WEXITSTATUS(st) != 0)
-                state = MS_DEAD;
-        }
-    }
     return state;
 }
 
@@ -108,110 +88,225 @@ void p9_unmount(const char *at)
     umount2(at, MNT_DETACH);
 }
 
-static int socket_answers(const char *path)
-{
-    struct sockaddr_un a;
-    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0), ok;
-    if (fd < 0)
-        return 0;
-    memset(&a, 0, sizeof a);
-    a.sun_family = AF_UNIX;
-    if (strlen(path) >= sizeof a.sun_path) { close(fd); return 0; }
-    strcpy(a.sun_path, path);
-    ok = connect(fd, (struct sockaddr *)&a, sizeof a) == 0;
-    close(fd);
-    return ok;
-}
+/* ---- one mount's process state ---- */
 
-/* the user's name and the directory the exporter says it serves, from NAME.info next to the socket (written by the exporter, so
- * both are checked before they go into a mount option).  0 on success. */
-static int read_info(const char *path, uid_t uid, char *uname, size_t un, char *aname, size_t an)
+struct mstate {
+    char    name[80];
+    int     used;
+    pid_t   relay, mounter;
+    int     ctl, kfd;                  /* the relay's messages; the kernel's end of the socket pair until the mounter has it */
+    char    buf[1024];
+    size_t  buflen;
+    time_t  retry_at, mount_t0;
+    int     mounted;                   /* this daemon mounted it and the relay lives */
+};
+
+static struct mstate *state_of(struct mstate *tab, const char *name)
 {
-    struct stat st;
-    char *text, *line, *save = NULL;
-    int ok = 0;
-    if (lstat(path, &st) < 0 || !S_ISREG(st.st_mode) || st.st_uid != uid)
-        return -1;
-    if (!(text = p9_read_file(path, NULL)))
-        return -1;
-    uname[0] = aname[0] = '\0';
-    for (line = strtok_r(text, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
-        if (!strncmp(line, "uname=", 6))
-            snprintf(uname, un, "%s", line + 6);
-        else if (!strncmp(line, "aname=", 6))
-            snprintf(aname, an, "%s", line + 6);
+    int i;
+    struct mstate *free_slot = NULL;
+    for (i = 0; i < MAXMOUNTS; i++) {
+        if (tab[i].used && !strcmp(tab[i].name, name))
+            return &tab[i];
+        if (!tab[i].used && !free_slot)
+            free_slot = &tab[i];
     }
-    free(text);
-    ok = p9share_valid_host(uname) && strchr(uname, '@') == NULL && strchr(uname, ':') == NULL && p9share_valid_path(aname);
-    return ok ? 0 : -1;
+    if (free_slot) {
+        memset(free_slot, 0, sizeof *free_slot);
+        free_slot->used = 1;
+        snprintf(free_slot->name, sizeof free_slot->name, "%s", name);
+        free_slot->ctl = free_slot->kfd = -1;
+    }
+    return free_slot;
 }
 
-struct said { char name[80]; char msg[200]; };
-
-static void say_once(struct said *tab, const char *name, const char *msg)
+static void drop_child_privileges(const struct passwd *pw)
 {
-    int i, free_slot = -1;
-    for (i = 0; i < 32; i++) {
-        if (!strcmp(tab[i].name, name)) {
-            if (!strcmp(tab[i].msg, msg))
-                return;
-            snprintf(tab[i].msg, sizeof tab[i].msg, "%s", msg);
-            p9_log("%s: %s", name, msg);
-            return;
+    char home[PB], user[96], logn[96];
+    int dn = open("/dev/null", O_RDWR);
+    dup2(dn, 0);
+    dup2(dn, 1);
+    dup2(dn, 2);
+    if (initgroups(pw->pw_name, pw->pw_gid) < 0 || setgid(pw->pw_gid) < 0 || setuid(pw->pw_uid) < 0 || chdir(pw->pw_dir) < 0)
+        _exit(126);
+    clearenv();
+    snprintf(home, sizeof home, "HOME=%s", pw->pw_dir);
+    snprintf(user, sizeof user, "USER=%s", pw->pw_name);
+    snprintf(logn, sizeof logn, "LOGNAME=%s", pw->pw_name);
+    putenv(home);
+    putenv(user);
+    putenv(logn);
+    putenv("PATH=/usr/local/bin:/usr/bin:/bin");
+}
+
+static void relay_start(struct mstate *ms, const struct nineshare_mount *m, const struct passwd *pw, const char *self)
+{
+    int sv[2], cp[2];
+    char hold[16], r[16], c[16];
+    if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sv) < 0 || pipe2(cp, O_CLOEXEC | O_NONBLOCK) < 0) {
+        p9_log("%s: cannot make the sockets for a relay: %s", m->name, strerror(errno));
+        ms->retry_at = time(NULL) + 5;
+        return;
+    }
+    ms->relay = fork();
+    if (ms->relay == 0) {
+        drop_child_privileges(pw);
+        fcntl(sv[1], F_SETFD, 0);                   /* the two this child needs stay open across exec */
+        fcntl(cp[1], F_SETFD, 0);
+        snprintf(hold, sizeof hold, "%d", m->hold ? m->hold : DEFAULT_HOLD);
+        snprintf(r, sizeof r, "%d", sv[1]);
+        snprintf(c, sizeof c, "%d", cp[1]);
+        execl(self, "9share", "relay", m->name, hold, r, c, (char *)NULL);
+        _exit(127);
+    }
+    close(sv[1]);
+    close(cp[1]);
+    if (ms->relay < 0) {
+        ms->relay = 0;
+        close(sv[0]);
+        close(cp[0]);
+        ms->retry_at = time(NULL) + 5;
+        return;
+    }
+    ms->kfd = sv[0];
+    ms->ctl = cp[0];
+    ms->buflen = 0;
+    ms->mounted = 0;
+}
+
+static void relay_end(struct mstate *ms, const struct nineshare_mount *m)
+{
+    if (ms->ctl >= 0) close(ms->ctl);
+    if (ms->kfd >= 0) close(ms->kfd);
+    ms->ctl = ms->kfd = -1;
+    if (ms->mounter > 0) {
+        kill(ms->mounter, SIGKILL);
+        waitpid(ms->mounter, NULL, 0);
+        ms->mounter = 0;
+    }
+    if (p9_mount_state(m->at) != MS_NONE && p9_mount_state(m->at) != MS_OTHER)
+        p9_unmount(m->at);                          /* the 9p client of a mount whose relay is gone is dead */
+    ms->mounted = 0;
+    ms->relay = 0;
+    ms->retry_at = time(NULL) + 1;
+}
+
+/* the exporter's session began: mount over the kernel's end of the socket pair.  mount(2) waits for the server's answer, which
+ * needs the relay and the link to run, so a child makes the call and this loop goes on. */
+static void mounter_start(struct mstate *ms, const struct nineshare_mount *m, const char *uname, const char *aname, int ro)
+{
+    char opts[3 * P9_LINE];
+    if (ms->mounter > 0 || ms->kfd < 0)
+        return;
+    p9_mkdir_p(m->at, 0755);
+    snprintf(opts, sizeof opts, "trans=fd,rfdno=%d,wfdno=%d,version=9p2000.L,uname=%s,access=any,aname=%s,msize=65536",
+             ms->kfd, ms->kfd, uname, aname);
+    ms->mount_t0 = time(NULL);
+    ms->mounter = fork();
+    if (ms->mounter == 0) {
+        int rc = mount("9share", m->at, "9p", MS_NOSUID | MS_NODEV | (ro ? MS_RDONLY : 0), opts);
+        if (rc < 0)
+            fprintf(stderr, "%s\n", strerror(errno));
+        _exit(rc < 0 ? 1 : 0);
+    }
+    close(ms->kfd);                                 /* the child has its own copy; the kernel takes a reference of its own */
+    ms->kfd = -1;
+    if (ms->mounter < 0)
+        ms->mounter = 0;
+}
+
+static int valid_uname(const char *s)
+{
+    return nineshare_valid_host(s) && !strchr(s, '@') && !strchr(s, ':');
+}
+
+static void ctl_read(struct mstate *ms, const struct nineshare_mount *m, int ro)
+{
+    char *nl;
+    ssize_t k;
+    if (ms->ctl < 0)
+        return;
+    k = read(ms->ctl, ms->buf + ms->buflen, sizeof ms->buf - 1 - ms->buflen);
+    if (k > 0)
+        ms->buflen += (size_t)k;
+    ms->buf[ms->buflen] = '\0';
+    while ((nl = strchr(ms->buf, '\n'))) {
+        *nl = '\0';
+        if (!strncmp(ms->buf, "NEW ", 4)) {
+            char uname[64], aname[P9_LINE];
+            if (sscanf(ms->buf + 4, "%63s %1023s", uname, aname) == 2 && valid_uname(uname) && nineshare_valid_path(aname))
+                mounter_start(ms, m, uname, aname, ro);
+            else
+                p9_log("%s: the exporter's session asks for values that cannot be used", m->name);
+        } else if (!strncmp(ms->buf, "LOG ", 4)) {
+            p9_log("%s: %s", m->name, ms->buf + 4);
+        } else {
+            p9_log("%s: the link session ended (%s)", m->name, ms->buf);
         }
-        if (free_slot < 0 && !tab[i].name[0])
-            free_slot = i;
+        ms->buflen -= (size_t)(nl + 1 - ms->buf);
+        memmove(ms->buf, nl + 1, ms->buflen + 1);
     }
-    if (free_slot >= 0) {
-        snprintf(tab[free_slot].name, sizeof tab[free_slot].name, "%s", name);
-        snprintf(tab[free_slot].msg, sizeof tab[free_slot].msg, "%s", msg);
-    }
-    p9_log("%s: %s", name, msg);
+    if (ms->buflen >= sizeof ms->buf - 1)
+        ms->buflen = 0;
 }
 
-static void reconcile(const struct p9share_mount *m, struct said *said)
+static void mount_tick(struct mstate *ms, const struct nineshare_mount *m, const char *self)
 {
     struct passwd *pw = getpwnam(m->user);
-    char sock[PB], info[PB], uname[64], aname[P9_LINE], opts[3 * P9_LINE], mode_ro[8];
     const char *want;
-    struct stat st;
-    int have, up;
+    time_t now = time(NULL);
+    int st, ro, have;
     if (!pw)
         return;
-    snprintf(sock, sizeof sock, "%s/.p9share/%s.sock", pw->pw_dir, m->name);
-    snprintf(info, sizeof info, "%s/.p9share/%s.info", pw->pw_dir, m->name);
     want = p9_mode_of(pw->pw_dir, m->name);
-    have = p9_mount_state(m->at);
-    if (have == MS_OTHER) {
-        say_once(said, m->name, "something that is not 9p is mounted at the mount point; leaving it");
+    ro = !strcmp(want, "ro");
+    if (ms->relay > 0 && waitpid(ms->relay, &st, WNOHANG) == ms->relay) {
+        ctl_read(ms, m, ro);
+        relay_end(ms, m);
+    }
+    if (ms->mounter > 0 && waitpid(ms->mounter, &st, WNOHANG) == ms->mounter) {
+        ms->mounter = 0;
+        if (WIFEXITED(st) && WEXITSTATUS(st) == 0) {
+            ms->mounted = 1;
+            p9_log("%s: mounted on %s (%s)", m->name, m->at, want);
+        } else {
+            p9_log("%s: the mount failed", m->name);
+            if (ms->relay > 0)
+                kill(ms->relay, SIGTERM);
+        }
+    } else if (ms->mounter > 0 && now - ms->mount_t0 > 60) {
+        p9_log("%s: the mount did not complete in a minute", m->name);
+        kill(ms->mounter, SIGKILL);
+        if (ms->relay > 0)
+            kill(ms->relay, SIGTERM);
+    }
+    ctl_read(ms, m, ro);
+    if (!strcmp(want, "off")) {
+        if (ms->relay > 0)
+            kill(ms->relay, SIGTERM);
+        else if (p9_mount_state(m->at) == MS_RW || p9_mount_state(m->at) == MS_RO)
+            p9_unmount(m->at);
         return;
     }
-    if (have == MS_DEAD) {
-        p9_log("%s: the mount does not answer, unmounting", m->at);
-        p9_unmount(m->at);
-        have = MS_NONE;
-    }
-    up = lstat(sock, &st) == 0 && S_ISSOCK(st.st_mode) && st.st_uid == pw->pw_uid && socket_answers(sock);
-    if (!strcmp(want, "off") || !up) {
-        if (have != MS_NONE && umount2(m->at, MNT_DETACH) == 0)
-            p9_log("unmounted %s (%s)", m->at, !strcmp(want, "off") ? "off" : "the tunnel is not there");
-        return;
-    }
-    snprintf(mode_ro, sizeof mode_ro, "%s", want);
-    if (have == MS_NONE) {
-        if (read_info(info, pw->pw_uid, uname, sizeof uname, aname, sizeof aname) < 0) {
-            say_once(said, m->name, "the exporter's info file is missing or has values that cannot be used");
+    if (ms->relay <= 0 && now >= ms->retry_at) {
+        have = p9_mount_state(m->at);
+        if (have == MS_OTHER) {
+            if (now >= ms->retry_at) {
+                p9_log("%s: something that is not 9p is mounted at %s; leaving it", m->name, m->at);
+                ms->retry_at = now + 300;
+            }
             return;
         }
-        p9_mkdir_p(m->at, 0755);
-        snprintf(opts, sizeof opts, "trans=unix,version=9p2000.L,uname=%s,access=any,aname=%s,msize=1048576", uname, aname);
-        if (mount(sock, m->at, "9p", MS_NOSUID | MS_NODEV | (!strcmp(want, "ro") ? MS_RDONLY : 0), opts) == 0)
-            p9_log("mounted %s on %s (%s)", aname, m->at, want);
-        else
-            say_once(said, m->name, strerror(errno));
-    } else if ((have == MS_RO) != !strcmp(want, "ro")) {
-        if (mount(NULL, m->at, NULL, MS_REMOUNT | MS_NOSUID | MS_NODEV | (!strcmp(want, "ro") ? MS_RDONLY : 0), NULL) == 0)
-            p9_log("%s is now %s", m->at, want);
+        if (have != MS_NONE)
+            p9_unmount(m->at);                      /* a leftover of an earlier run */
+        relay_start(ms, m, pw, self);
+    }
+    if (ms->mounted && ms->mounter <= 0) {
+        have = p9_mount_state(m->at);
+        if ((have == MS_RO) != ro && (have == MS_RO || have == MS_RW)) {
+            if (mount(NULL, m->at, NULL, MS_REMOUNT | MS_NOSUID | MS_NODEV | (ro ? MS_RDONLY : 0), NULL) == 0)
+                p9_log("%s: %s is now %s", m->name, m->at, want);
+        }
     }
 }
 
@@ -219,24 +314,8 @@ static pid_t start_user_serve(const struct passwd *pw, const char *self)
 {
     pid_t pid = fork();
     if (pid == 0) {
-        char home[PB], user[96], logn[96];
-        int dn = open("/dev/null", O_RDWR);
-        dup2(dn, 0);
-        dup2(dn, 1);
-        dup2(dn, 2);
-        if (initgroups(pw->pw_name, pw->pw_gid) < 0 || setgid(pw->pw_gid) < 0 || setuid(pw->pw_uid) < 0)
-            _exit(126);
-        if (chdir(pw->pw_dir) < 0)
-            _exit(126);
-        clearenv();
-        snprintf(home, sizeof home, "HOME=%s", pw->pw_dir);
-        snprintf(user, sizeof user, "USER=%s", pw->pw_name);
-        snprintf(logn, sizeof logn, "LOGNAME=%s", pw->pw_name);
-        putenv(home);
-        putenv(user);
-        putenv(logn);
-        putenv("PATH=/usr/local/bin:/usr/bin:/bin");
-        execl(self, "p9share", "serve", (char *)NULL);
+        drop_child_privileges(pw);
+        execl(self, "9share", "serve", (char *)NULL);
         _exit(127);
     }
     return pid;
@@ -246,7 +325,7 @@ int p9_boot(int detach)
 {
     char confp[P9_LINE], *self;
     struct sigaction sa;
-    struct said said[32];
+    struct mstate mst[MAXMOUNTS];
     pid_t kids[64];
     uid_t kid_uid[64];
     int nkids = 0, lk, i;
@@ -254,7 +333,7 @@ int p9_boot(int detach)
     size_t nmanaged = 0, k;
 
     if (geteuid() != 0) {
-        fprintf(stderr, "p9share: boot is for root (the p9share service runs it)\n");
+        fprintf(stderr, "9share: boot is for root (the 9share service runs it)\n");
         return 1;
     }
     if (detach) {
@@ -264,16 +343,16 @@ int p9_boot(int detach)
         if (pid > 0)
             return 0;
         setsid();
-        if (freopen("/var/log/p9share.log", "a", stderr) == NULL)
+        if (freopen("/var/log/9share.log", "a", stderr) == NULL)
             return 1;
         close(0);
         close(1);
     }
-    if ((lk = p9_lock("/run/p9share.lock")) < 0) {
-        fprintf(stderr, "p9share: boot is already running\n");
+    if ((lk = p9_lock("/run/9share.lock")) < 0) {
+        fprintf(stderr, "9share: boot is already running\n");
         return 1;
     }
-    openlog("p9share", LOG_PID, LOG_DAEMON);
+    openlog("9share", LOG_PID, LOG_DAEMON);
     memset(&sa, 0, sizeof sa);
     sa.sa_handler = on_term;
     sigaction(SIGTERM, &sa, NULL);
@@ -285,15 +364,15 @@ int p9_boot(int detach)
         p9_run(modprobe_9p, 20, NULL, 0);
     }
     self = p9_self();
-    memset(said, 0, sizeof said);
+    memset(mst, 0, sizeof mst);
     p9_system_conf_path(confp, sizeof confp);
 
     while (!stopping) {
         struct passwd *pw;
-        struct p9share_conf c;
+        struct nineshare_conf c;
         size_t j;
 
-        /* each user who has exports gets a `p9share serve`, unless one runs (maybe started by hand) */
+        /* each user who has exports gets a `9share serve`, unless one runs (maybe started by hand) */
         for (i = 0; i < nkids; ) {
             int st;
             if (waitpid(kids[i], &st, WNOHANG) == kids[i]) {
@@ -314,7 +393,7 @@ int p9_boot(int detach)
             for (i = 0; i < nkids; i++)
                 if (kid_uid[i] == pw->pw_uid)
                     have = 1;
-            snprintf(lockp, sizeof lockp, "%s/.local/state/p9share/serve.lock", pw->pw_dir);
+            snprintf(lockp, sizeof lockp, "%s/.local/state/9share/serve.lock", pw->pw_dir);
             if (have || p9_lock_held(lockp) || nkids >= 64)
                 continue;
             if ((kids[nkids] = start_user_serve(pw, self)) > 0) {
@@ -325,31 +404,55 @@ int p9_boot(int detach)
         endpwent();
 
         /* the mounts */
-        p9share_conf_init(&c);
+        nineshare_conf_init(&c);
         if (p9_file_exists(confp))
-            p9share_conf_parse(confp, &c);
-        for (j = 0; j < c.nmounts; j++)
-            reconcile(&c.mounts[j], said);
-        for (k = 0; k < nmanaged; k++) {            /* a mount that left the file is unmounted */
-            for (j = 0; j < c.nmounts && strcmp(c.mounts[j].at, managed[k]); j++)
+            nineshare_conf_parse(confp, &c);
+        for (j = 0; j < c.nmounts; j++) {
+            struct mstate *ms = state_of(mst, c.mounts[j].name);
+            if (ms)
+                mount_tick(ms, &c.mounts[j], self);
+        }
+        for (k = 0; k < nmanaged; k++) {            /* a mount that left the file: its relay ends, it is unmounted */
+            for (j = 0; j < c.nmounts && strcmp(c.mounts[j].name, managed[k]); j++)
                 ;
-            if (j == c.nmounts)
-                p9_unmount(managed[k]);
+            if (j == c.nmounts) {
+                struct mstate *ms = state_of(mst, managed[k]);
+                if (ms) {
+                    if (ms->relay > 0) { kill(ms->relay, SIGTERM); waitpid(ms->relay, NULL, 0); }
+                    if (ms->ctl >= 0) close(ms->ctl);
+                    if (ms->kfd >= 0) close(ms->kfd);
+                    ms->used = 0;
+                }
+            }
             free(managed[k]);
         }
         free(managed);
         managed = c.nmounts ? calloc(c.nmounts, sizeof *managed) : NULL;
         nmanaged = managed ? c.nmounts : 0;
         for (k = 0; k < nmanaged; k++)
-            managed[k] = strdup(c.mounts[k].at);
-        p9share_conf_free(&c);
-        for (i = 0; i < 20 && !stopping; i++)
+            managed[k] = strdup(c.mounts[k].name);
+        nineshare_conf_free(&c);
+        for (i = 0; i < 5 && !stopping; i++)
             usleep(100000);
     }
-    for (k = 0; k < nmanaged; k++) {
-        p9_unmount(managed[k]);
-        free(managed[k]);
+    /* shutting down: the relays end, the mounts go */
+    for (i = 0; i < MAXMOUNTS; i++)
+        if (mst[i].used && mst[i].relay > 0) {
+            kill(mst[i].relay, SIGTERM);
+            waitpid(mst[i].relay, NULL, 0);
+        }
+    {
+        struct nineshare_conf c2;
+        nineshare_conf_init(&c2);
+        if (p9_file_exists(confp))
+            nineshare_conf_parse(confp, &c2);
+        for (k = 0; k < c2.nmounts; k++)
+            if (p9_mount_state(c2.mounts[k].at) == MS_RW || p9_mount_state(c2.mounts[k].at) == MS_RO)
+                p9_unmount(c2.mounts[k].at);
+        nineshare_conf_free(&c2);
     }
+    for (k = 0; k < nmanaged; k++)
+        free(managed[k]);
     free(managed);
     for (i = 0; i < nkids; i++)
         kill(kids[i], SIGTERM);
