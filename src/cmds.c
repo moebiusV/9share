@@ -1,8 +1,12 @@
 /* cmds.c -- the commands a person types: export, unexport, mount, unmount, rw|ro|off, status, wsl-boot. */
 #include "cmds.h"
 #include "9share.h"
+#include "../daud/src/liblink/crypto.h"
 #include <errno.h>
 #include <pwd.h>
+#include <signal.h>
+#include <sys/random.h>
+#include <sys/wait.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -351,5 +355,114 @@ int cmd_wsl_boot(void)
     printf("/etc/wsl.conf now starts 9share at boot.  Restart WSL once (wsl.exe --shutdown, from Windows), or start it now: sudo 9share boot --detach\n");
     free(text);
     free(out);
+    return 0;
+}
+
+/* ---- pair: one secret, on both machines ---- */
+
+/* `9share pair --receive NAME`, which ssh runs on the other machine: the secret comes in on standard input, never on a command line.
+ * Exit status 3: there is one already (and --force was not given). */
+static int pair_receive(const char *name, int force)
+{
+    char line[512], path[PB], *nl;
+    size_t i;
+    int rc;
+    if (!fgets(line, sizeof line, stdin) || !(nl = strpbrk(line, "\r\n")))
+        return fail("%s", "no secret on standard input");
+    *nl = '\0';
+    if (strlen(line) < 16 || strlen(line) > 255 || strspn(line, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=") != strlen(line))
+        return fail("%s", "that is not a secret made by 9share pair");
+    /* the receiving side reads it from HOME, as the relay does */
+    if (p9_secret_path(getenv("HOME"), name, path, sizeof path) < 0)
+        return fail("'%s' cannot be the name of a share", name);
+    rc = p9_secret_store(path, line, force);
+    for (i = 0; i < sizeof line; i++)
+        line[i] = 0;
+    if (rc == 1) {
+        fprintf(stderr, "9share: %s already has a secret on this machine; run pair with --force to replace it\n", name);
+        return 3;
+    }
+    if (rc < 0)
+        return fail("cannot write the secret: %s", strerror(errno));
+    return 0;
+}
+
+int cmd_pair(int argc, char **argv)
+{
+    const char *name = NULL, *host = NULL;
+    int force = 0, receive = 0, i;
+    char path[PB], raw[32], secret[64];
+    struct stat st;
+    int pfd[2], status = 0;
+    pid_t pid;
+
+    for (i = 0; i < argc; i++) {
+        if (!strcmp(argv[i], "--force")) force = 1;
+        else if (!strcmp(argv[i], "--receive")) receive = 1;
+        else if (argv[i][0] == '-') { fprintf(stderr, "usage: 9share pair [--force] NAME HOST\n"); return 2; }
+        else if (!name) name = argv[i];
+        else if (!host) host = argv[i];
+        else { fprintf(stderr, "usage: 9share pair [--force] NAME HOST\n"); return 2; }
+    }
+    if (!name || (receive ? host != NULL : host == NULL)) {
+        fprintf(stderr, "usage: 9share pair [--force] NAME HOST\n");
+        return 2;
+    }
+    if (!nineshare_valid_name(name))
+        return fail("'%s' cannot be the name of a share (letters, digits and . _ -)", name);
+    if (receive)
+        return pair_receive(name, force);
+    if (!nineshare_valid_host(host))
+        return fail("'%s' is not a host name as ssh knows it", host);
+    if (p9_secret_path(NULL, name, path, sizeof path) < 0)
+        return fail("the secret of '%s' has no usable path", name);
+    if (!force && lstat(path, &st) == 0) {
+        fprintf(stderr, "9share: %s already has a secret here (%s); pair --force replaces it on both machines\n", name, path);
+        return 1;
+    }
+    if (getrandom(raw, sizeof raw, 0) != (ssize_t)sizeof raw || !lk_b64_encode(raw, sizeof raw, secret, sizeof secret))
+        return fail("%s", "cannot get random bytes");
+    memset(raw, 0, sizeof raw);
+
+    /* the other machine first: if that fails nothing here has changed (and --force has not thrown away a working secret) */
+    if (pipe(pfd) < 0)
+        return fail("%s", "pipe failed");
+    signal(SIGPIPE, SIG_IGN);
+    if ((pid = fork()) < 0)
+        return fail("%s", "fork failed");
+    if (pid == 0) {
+        dup2(pfd[0], 0);
+        close(pfd[0]);
+        close(pfd[1]);
+        if (force)
+            execlp("ssh", "ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host, "9share", "pair", "--receive", "--force", name, (char *)NULL);
+        execlp("ssh", "ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host, "9share", "pair", "--receive", name, (char *)NULL);
+        _exit(127);
+    }
+    close(pfd[0]);
+    if (write(pfd[1], secret, strlen(secret)) < 0 || write(pfd[1], "\n", 1) < 0) { /* ssh is gone: its status says why */ }
+    close(pfd[1]);
+    if (waitpid(pid, &status, 0) < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        int code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+        memset(secret, 0, sizeof secret);
+        if (code == 3)
+            fprintf(stderr, "9share: %s already has a secret on %s; pair --force replaces it on both machines\n", name, host);
+        else if (code == 255)
+            fprintf(stderr, "9share: ssh could not reach %s (ssh needs to log in there without a password)\n", host);
+        else if (code == 127)
+            fprintf(stderr, "9share: ssh is not installed here\n");
+        else
+            fprintf(stderr, "9share: pair failed on %s (is 9share installed there, and is it this version?)\n", host);
+        fprintf(stderr, "9share: nothing was changed here\n");
+        return 1;
+    }
+    if (p9_secret_store(path, secret, 1) < 0) {
+        memset(secret, 0, sizeof secret);
+        fprintf(stderr, "9share: %s now has the secret, but it could not be written here (%s): run pair --force again\n", host, strerror(errno));
+        return 1;
+    }
+    memset(secret, 0, sizeof secret);
+    printf("%s is paired with %s: from now on each connection proves a shared secret (SCRAM-SHA-256) as well as trusting ssh.\n"
+           "The export here and the mount there pick it up by themselves.\n", name, host);
     return 0;
 }

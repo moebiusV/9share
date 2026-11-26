@@ -11,6 +11,7 @@ static void usage(FILE *f)
           "  the machine that has the files (as yourself, no sudo):\n"
           "    9share export DIR HOST [NAME]    share DIR with HOST under NAME (default: the directory's name)\n"
           "    9share unexport NAME             stop sharing it\n"
+          "    9share pair NAME HOST            make one secret for NAME and put it on both machines (SCRAM on every connection)\n"
           "\n"
           "  the machine that shows the files:\n"
           "    sudo 9share mount USER NAME DIR  show USER's share NAME at DIR (USER: the account here that the exporter logs in as)\n"
@@ -41,6 +42,7 @@ int main(int argc, char **argv)
     if (!strcmp(c, "mount")) return cmd_mount(argc, argv);
     if (!strcmp(c, "unmount")) return cmd_unmount(argc, argv);
     if (!strcmp(c, "rw") || !strcmp(c, "ro") || !strcmp(c, "off")) return cmd_mode(c, argc, argv);
+    if (!strcmp(c, "pair")) return cmd_pair(argc, argv);
     if (!strcmp(c, "status")) return cmd_status();
     if (!strcmp(c, "wsl-boot")) return cmd_wsl_boot();
     if (!strcmp(c, "serve")) return p9_serve();

@@ -58,26 +58,66 @@ void p9_user_conf_path(const char *home, char *buf, size_t n)
         snprintf(buf, n, "%s/.config/9share/9share.conf", getenv("HOME") ? getenv("HOME") : ".");
 }
 
-/* The link secret of share NAME: HOME's .config/9share/NAME.secret (HOME NULL: where the caller's 9share.conf is).  Returns 0 and
- * the secret (its first line) when the file is there and usable; 1 when there is no such file (the link then trusts its carrier);
- * -1 when it is there but must not be used, with the reason in WHY: the link must not fall back to trusting the carrier. */
+/* Where the link secret of share NAME is: HOME's .config/9share/NAME.secret (HOME NULL: beside the caller's 9share.conf). */
+int p9_secret_path(const char *home, const char *name, char *buf, size_t n)
+{
+    char conf[P9_LINE], *slash;
+    if (!nineshare_valid_name(name))
+        return -1;
+    p9_user_conf_path(home, conf, sizeof conf);
+    if (!(slash = strrchr(conf, '/')))
+        return -1;
+    *slash = '\0';
+    return snprintf(buf, n, "%s/%s.secret", conf, name) >= (int)n ? -1 : 0;
+}
+
+/* Put SECRET (one line) in PATH for its owner alone, whole or not at all.  0; 1 if the file is there and FORCE is not set; -1 on error. */
+int p9_secret_store(const char *path, const char *secret, int force)
+{
+    char tmp[P9_LINE + 32], dir[P9_LINE], *slash;
+    struct stat st;
+    size_t n = strlen(secret);
+    int fd, rc;
+
+    snprintf(dir, sizeof dir, "%s", path);
+    if ((slash = strrchr(dir, '/'))) {
+        *slash = '\0';
+        if (p9_mkdir_p(dir, 0700) < 0)
+            return -1;
+    }
+    snprintf(tmp, sizeof tmp, "%s.new.%d", path, (int)getpid());
+    if ((fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600)) < 0)
+        return -1;
+    if (write(fd, secret, n) != (ssize_t)n || write(fd, "\n", 1) != 1 || fsync(fd) < 0) {
+        close(fd);
+        unlink(tmp);
+        return -1;
+    }
+    close(fd);
+    if (force)
+        rc = rename(tmp, path) == 0 ? 0 : -1;
+    else if (link(tmp, path) == 0)                      /* fails if PATH is there: nothing is replaced, and no one sees half a file */
+        rc = 0;
+    else if (errno == EEXIST)
+        rc = 1;
+    else                                                /* a file system without hard links: look, then rename */
+        rc = lstat(path, &st) == 0 ? 1 : (rename(tmp, path) == 0 ? 0 : -1);
+    unlink(tmp);
+    return rc;
+}
+
+/* The link secret of share NAME.  Returns 0 and the secret (its first line) when the file is there and usable; 1 when there is no
+ * such file (the link then trusts its carrier); -1 when it is there but must not be used, with the reason in WHY: the link must
+ * not fall back to trusting the carrier. */
 int p9_secret_load(const char *home, const char *name, char *secret, size_t n, char *path, size_t pn, char *why, size_t wn)
 {
-    char conf[P9_LINE], line[512], *slash, *nl;
+    char line[512], *nl;
     struct stat st;
     FILE *f;
     int fd;
 
-    if (!nineshare_valid_name(name)) {
-        snprintf(why, wn, "%s is not a usable name", name);
-        return -1;
-    }
-    p9_user_conf_path(home, conf, sizeof conf);
-    if (!(slash = strrchr(conf, '/')))
-        slash = conf;
-    *slash = '\0';
-    if (snprintf(path, pn, "%s/%s.secret", conf, name) >= (int)pn) {
-        snprintf(why, wn, "the path of the secret is too long");
+    if (p9_secret_path(home, name, path, pn) < 0) {
+        snprintf(why, wn, "%s is not a usable name, or its secret's path is too long", name);
         return -1;
     }
     if ((fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)) < 0) {
