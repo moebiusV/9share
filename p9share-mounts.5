@@ -1,0 +1,36 @@
+.TH P9SHARE-MOUNTS 5 "2026" "p9share" "File Formats"
+.SH NAME
+p9share-mounts \- the shares a machine shows, for p9share
+.SH DESCRIPTION
+.I /etc/p9share/mounts
+has one mount per line, three fields separated by white space:
+.RS
+.nf
+USER NAME MOUNTPOINT
+.fi
+.RE
+.TP
+.I USER
+The account on this machine that the exporting machine logs in to.  Its socket
+.IR ~USER/.p9share/NAME.sock
+is what is mounted, and only if that socket is owned by USER.
+.TP
+.I NAME
+The name the exporter gave the share.
+.TP
+.I MOUNTPOINT
+An absolute path (letters, digits and  . _ + @ \- / only), created if missing.
+.PP
+Blank lines and text after # are ignored.  The file is written by
+.B p9share mount
+and
+.BR "p9share unmount" ,
+and may be edited by hand; the daemon re-reads it every two seconds.  A mountpoint that already holds something that is not 9p is left alone.
+.PP
+The user's mode for the mount (rw, ro or off) is in
+.IR ~USER/.config/p9share/mode.d/NAME ,
+written by
+.BR "p9share rw|ro|off NAME" .
+.SH SEE ALSO
+.BR p9share (8),
+.BR p9share\-exports (5)

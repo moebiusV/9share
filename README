@@ -1,0 +1,41 @@
+p9share -- share directories between machines over 9P, through ssh
+
+On the machine that has the files, as yourself:
+
+    p9share export /srv/projects bob.example.org
+
+On the machine that should show them, once:
+
+    sudo p9share mount alice projects /mnt/projects
+
+That is all.  The exporting machine dials out to the other with ssh, so the
+receiving side needs no open port and no server for you to configure.  A daemon
+that starts at boot keeps the tunnel up (restarting it when it drops) and keeps the
+mount right: mounted while the tunnel is there, unmounted when it is not.  The user
+on the receiving machine switches it without sudo:
+
+    p9share ro projects        read-only
+    p9share rw projects        read-write
+    p9share off projects       not mounted
+
+    p9share status             what is shared, what is mounted, what is running
+
+Several directories, several machines, and both directions at once all work; each
+is one more line.  Nothing happens on a machine until something is configured on it.
+
+How it works: the exporter runs diod (the 9P2000.L server) as you, unprivileged, on a
+private unix socket; a small relay in front of it supplies the numeric uid an
+unprivileged diod needs; ssh -R hands that socket to the other machine, into the
+user's ~/.p9share/.  The receiver's root daemon mounts it with the kernel's 9p client.
+
+Requirements: Debian or Ubuntu (WSL2 too), openssh-client; key-based
+ssh from the exporter to the receiver (BatchMode: no password prompts).
+
+Security: the export is the directory you name, with your rights, and the mount is
+nosuid,nodev.  The 9P socket on the receiving machine belongs to that machine's user;
+any local user there who can reach the mount point sees the files as you.  Do not
+export a directory to a machine whose users you do not trust.
+
+On WSL2 there is no systemd: sudo p9share wsl-boot puts the daemon in /etc/wsl.conf.
+
+See INSTALL, p9share(8), p9share-exports(5), p9share-mounts(5).  License: ISC.

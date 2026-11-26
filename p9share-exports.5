@@ -1,0 +1,33 @@
+.TH P9SHARE-EXPORTS 5 "2026" "p9share" "File Formats"
+.SH NAME
+p9share-exports \- the directories a user shares with p9share
+.SH DESCRIPTION
+.I ~/.config/p9share/exports
+has one share per line, three fields separated by white space:
+.RS
+.nf
+DIR HOST NAME
+.fi
+.RE
+.TP
+.I DIR
+An absolute path of the directory to share.  Letters, digits and  . _ + @ \- / only: no spaces or commas.
+.TP
+.I HOST
+Where to send it, as
+.BR ssh (1)
+knows it (a name from ~/.ssh/config, or user@host).  ssh must work without a password.
+.TP
+.I NAME
+A name for the share (letters, digits, . _ \-), unique in the file.  The receiving machine uses it too.
+.PP
+Blank lines and text after # are ignored.  The file is written by
+.B p9share export
+and
+.BR "p9share unexport" ,
+and may be edited by hand; a running
+.B p9share serve
+re-reads it every two seconds and starts, stops or restarts only the shares whose line changed.
+.SH SEE ALSO
+.BR p9share (8),
+.BR p9share\-mounts (5)

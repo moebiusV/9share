@@ -1,0 +1,22 @@
+Installing p9share
+
+From the source:    ./configure && make && make check && sudo make install
+As a package:       make deb && sudo apt install ./debbuild/p9share_*_all.deb     (needs debhelper; installs diod too)
+
+Install it on both machines.  Then:
+
+  exporting machine (as yourself):    p9share export DIR HOST [NAME]
+  receiving machine:                  sudo p9share mount USER NAME DIR
+
+  (USER is the account on the receiving machine that the exporter logs in to.  `p9share export` prints the line to run there.)
+
+The p9share service is enabled by the package and started at boot (sudo systemctl start p9share to start it now).
+From `make install` it is installed but you enable it yourself:  sudo systemctl enable --now p9share
+On WSL2 (no systemd):   sudo p9share wsl-boot      then restart WSL once (wsl.exe --shutdown), or run  sudo p9share boot --detach
+
+Moving over from the prototype scripts (p9share, p9mode, p9share-mountd with its own service, the unit p9share-mountd.service):
+  receiving machine:  sudo systemctl disable --now p9share-mountd; sudo rm /etc/systemd/system/p9share-mountd.service
+                      /usr/local/sbin/p9share-mountd /usr/local/bin/p9mode; then sudo p9share mount USER NAME DIR as above
+  exporting machine:  the old `p9share stop`, remove its line from the boot command in /etc/wsl.conf, then p9share export as above.
+
+ssh needs to work without a password from the exporter to the receiver:  ssh HOST true

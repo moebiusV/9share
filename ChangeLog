@@ -1,0 +1,5 @@
+2026-11-26  David Walther
+
+	* p9share.in: one command and one root daemon, from the prototype's p9share, p9mode, p9share-mountd and wsl-boot.  Several exports
+	and mounts, the exporter tells the receiver its user and directory (~/.p9share/NAME.info), values checked before they reach mount.
+	* configure.ac, Makefile.in, debian/: GNU build and the Debian package; tests/check.py.
