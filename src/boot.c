@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
+#include <limits.h>
 #include <pwd.h>
 #include <signal.h>
 #include <stdio.h>
@@ -43,10 +44,12 @@ const char *p9_mount_state_name(int s)
 /* what is mounted at AT, from /proc/self/mountinfo (nothing is asked of the mount itself: it may be waiting for a carrier) */
 int p9_mount_state(const char *at)
 {
-    char real[P9_LINE], line[2048];
+    char real[P9_LINE], rp[PATH_MAX], line[2048];
     FILE *f;
     int state = MS_NONE;
-    if (!realpath(at, real))
+    if (realpath(at, rp) && strlen(rp) < sizeof real)      /* realpath may write PATH_MAX bytes */
+        snprintf(real, sizeof real, "%s", rp);
+    else
         snprintf(real, sizeof real, "%s", at);
     if (!(f = fopen("/proc/self/mountinfo", "r")))
         return MS_NONE;

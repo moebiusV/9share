@@ -3,6 +3,7 @@
 #include "9share.h"
 #include "../daud/src/liblink/crypto.h"
 #include <errno.h>
+#include <limits.h>
 #include <pwd.h>
 #include <signal.h>
 #include <sys/random.h>
@@ -41,7 +42,7 @@ static void ssh_user(const char *host, char *out, size_t n)
 
 int cmd_export(int argc, char **argv)
 {
-    char confp[PB], dir[P9_LINE], text[3 * P9_LINE], user[128];
+    char confp[PB], dir[P9_LINE], rp[PATH_MAX], text[3 * P9_LINE], user[128];
     const char *host, *name;
     struct nineshare_conf c;
     struct stat st;
@@ -50,8 +51,12 @@ int cmd_export(int argc, char **argv)
         fprintf(stderr, "usage: 9share export DIR HOST [NAME]\n");
         return 2;
     }
-    if (!realpath(argv[0], dir) || stat(dir, &st) < 0 || !S_ISDIR(st.st_mode))
+    /* realpath may write PATH_MAX bytes: into a buffer of that size, then what fits */
+    if (!realpath(argv[0], rp) || stat(rp, &st) < 0 || !S_ISDIR(st.st_mode))
         return fail("%s is not a directory", argv[0]);
+    if (strlen(rp) >= sizeof dir)
+        return fail("%s: the path is too long", argv[0]);
+    snprintf(dir, sizeof dir, "%s", rp);
     host = argv[1];
     if (argc == 3)
         name = argv[2];

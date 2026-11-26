@@ -44,6 +44,12 @@ check "when the secret cannot be made the share is still set up" '[ $rc -eq 0 ] 
 check "and what to do later is said" 'grep -q "9share pair later other.example.org" "$T/o"'
 check "and no secret was left behind" '[ ! -e "$HOME/.config/9share/later.secret" ]'
 
+# a path longer than the buffers that hold it is refused cleanly, not overflowed (and not aborted, as hardened builds do)
+long=$T/long; i=0; while [ $i -lt 12 ]; do long=$long/$(printf 'd%.0s' $(seq 1 100)); i=$((i + 1)); done
+mkdir -p "$long" 2>/dev/null
+9share setup --export "$long" host longname --no-pair > "$T/o" 2>&1; rc=$?
+check "a path of more than a thousand characters is refused, not overflowed" '[ $rc -ne 0 ] && [ $rc -lt 128 ]'
+
 cp "$CONF" "$T/conf.before"
 9share setup --export "$T/nonexistent" host x > "$T/o" 2>&1; rc=$?
 check "a directory that is not there is refused" '[ $rc -ne 0 ] && grep -q "is not a directory" "$T/o" && cmp -s "$CONF" "$T/conf.before"'

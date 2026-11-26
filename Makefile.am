@@ -5,8 +5,8 @@ systemdsystemunit_DATA = systemd/9share.service
 endif
 
 # the first-run script and the one that makes the daemon start at boot the way this machine does it
-bin_SCRIPTS = tools/9share-setup
-pkglibexec_SCRIPTS = tools/9share-init
+dist_bin_SCRIPTS = tools/9share-setup
+dist_pkglibexec_SCRIPTS = tools/9share-init
 
 # the commented template of /etc/9share/9share.conf: put there only if there is no file yet (a package manager keeps its own care of it)
 install-data-local:
