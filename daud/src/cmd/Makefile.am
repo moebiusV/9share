@@ -5,16 +5,9 @@ AM_CPPFLAGS = \
 	$(MUNGE_CFLAGS) \
 	$(CAP_CFLAGS) \
 	$(LUA_INCLUDE)
-AM_CPPFLAGS += $(ncurses_CPPFLAGS)
 
-sbin_PROGRAMS = \
-	diod \
-	diodcli \
-	dtop
-
-if ENABLE_DIODMOUNT
-sbin_PROGRAMS += mount.diod
-endif
+# daud: the one program p9share needs (upstream's diodcli, dtop and mount.diod are not built)
+sbin_PROGRAMS = daud
 
 common_ldadd = \
 	$(top_builddir)/src/libdiod/libdiod.a \
@@ -23,23 +16,14 @@ common_ldadd = \
 	$(top_builddir)/src/liblsd/liblsd.a \
 	$(top_builddir)/src/libdiod/libdiod.a \
 	$(LIBPTHREAD) $(LUA_LIB) $(MUNGE_LIBS) $(CAP_LIBS) \
-	$(LIBIBVERBS) $(LIBRDMACM) $(LIBTCMALLOC) $(ncurses_LIBS)
+	$(LIBIBVERBS) $(LIBRDMACM) $(LIBTCMALLOC)
 
 common_sources = \
 	opt.c \
 	opt.h
 
-diod_LDADD = $(common_ldadd)
-diod_SOURCES = diod.c $(common_sources)
-
-diodcli_LDADD = $(common_ldadd)
-diodcli_SOURCES = diodcli.c $(common_sources)
-
-mount_diod_LDADD = $(common_ldadd)
-mount_diod_SOURCES = mount.diod.c $(common_sources)
-
-dtop_LDADD = $(common_ldadd)
-dtop_SOURCES = dtop.c sample.c sample.h
+daud_LDADD = $(common_ldadd)
+daud_SOURCES = diod.c $(common_sources)
 
 TESTS = \
 	test_opt.t

@@ -277,6 +277,7 @@ struct Npsrv {
 	char*		(*get_path)(Npfid *fid);
 	Npauth*		auth;
 	int		flags;
+	u32		default_uid;	/* uid for an attach that names none (NONUNAME: none) */
 
 	void		(*fiddestroy)(Npfid *);
 
@@ -335,6 +336,7 @@ struct Npuser {
 
 /* srv.c */
 Npsrv *np_srv_create(int nwthread, int flags);
+void np_srv_set_default_uid(Npsrv *srv, u32 uid);
 void np_srv_destroy(Npsrv *srv);
 void np_srv_shutdown(Npsrv *srv);
 void np_srv_remove_conn_pre(Npsrv *, Npconn *);

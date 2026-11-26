@@ -453,6 +453,11 @@ np_attach2user (Npsrv *srv, Npstr *uname, u32 n_uname)
 	Npuser *u = NULL;
 	char *s;
 
+	/* Without a user database a server that runs as one user cannot look up the name in the
+	 * attach, and a client such as the kernel's sends no numeric uid: it is that user. */
+	if (n_uname == NONUNAME && (srv->flags & SRV_FLAGS_NOUSERDB)
+				&& srv->default_uid != NONUNAME)
+		n_uname = srv->default_uid;
 	if (n_uname != NONUNAME) {
 		u = np_uid2user (srv, n_uname);
 	} else {

@@ -1,8 +1,7 @@
 ##
 # Prologue
 ##
-AC_INIT([diod],
-        m4_esyscmd([git describe --always | awk '/.*/ {sub(/^v/, ""); printf "%s",$1; exit}']))
+AC_INIT([daud],[0.1.0])
 AC_CONFIG_AUX_DIR([config])
 AC_CONFIG_MACRO_DIR([config])
 AC_CONFIG_SRCDIR([NEWS.md])
@@ -58,11 +57,6 @@ m4_ifndef([PKG_PROG_PKG_CONFIG],
 # Initialize pkg-config for PKG_CHECK_MODULES to avoid conditional issues
 ##
 PKG_PROG_PKG_CONFIG
-
-##
-# Checks for ncurses
-##
-PKG_CHECK_MODULES([ncurses], [ncurses])
 
 ##
 # Checks for header files.
@@ -169,16 +163,10 @@ AC_CONFIG_FILES( \
   src/libnpfs/Makefile \
   src/libnpclient/Makefile \
   man/Makefile \
-  man/diod.8 \
-  man/mount.diod.8 \
-  man/diodcli.8 \
-  man/dtop.8 \
-  man/diod.conf.5 \
-  etc/diod.service \
+  man/daud.8 \
   src/cmd/Makefile \
   src/Makefile \
   t/Makefile \
-  etc/Makefile \
 )
 
 AC_OUTPUT

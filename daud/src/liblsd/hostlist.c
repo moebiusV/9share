@@ -1405,7 +1405,7 @@ struct _range {
  * returns 1 if str contained a valid number or range,
  *         0 if conversion of str to a range failed.
  */
-static int _parse_single_range(const char *str, struct _range *range)
+static int _parse_single_range(char *str, struct _range *range)
 {
     char *p, *q;
     char *orig = strdup(str);

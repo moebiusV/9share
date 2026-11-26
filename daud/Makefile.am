@@ -1,7 +1,6 @@
 SUBDIRS = \
 	src \
 	man \
-	etc \
 	t
 
 EXTRA_DIST = \

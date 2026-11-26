@@ -56,6 +56,7 @@ np_srv_create(int nwthread, int flags)
 
 	srv->msize = 8216;
 	srv->flags = flags;
+	srv->default_uid = NONUNAME;
 
 	if (np_ctl_initialize (srv) < 0)
 		goto error;
@@ -979,4 +980,10 @@ error_unlock:
 	if (s)
 		free(s);
 	return NULL;
+}
+
+void
+np_srv_set_default_uid(Npsrv *srv, u32 uid)
+{
+	srv->default_uid = uid;
 }

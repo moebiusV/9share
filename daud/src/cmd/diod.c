@@ -265,7 +265,7 @@ main(int argc, char **argv)
         msg_exit ("--rfdno,wfdno must be used together");
 #ifndef AUTH
     if (diod_conf_get_auth_required ()) {
-        msg_exit ("diod was built without authentication support."
+        msg_exit ("daud was built without authentication support."
                   " Run with --no-auth.");
     }
 #endif
@@ -632,14 +632,14 @@ _service_run (srvmode_t mode, int rfdno, int wfdno)
         }
 #else
         if (init_ganesha_syscalls() < 0) {
-            msg_exit ("diod cannot continue in multi-user mode without"
+            msg_exit ("daud cannot continue in multi-user mode without"
                       " nfs-ganesha-kmod loaded");
         }
         /* SRV_FLAGS_SETGROUPS is ignored in user-freebsd.c */
 #endif
         msg ("Anyone can attach and access files as themselves");
 #else
-        msg_exit ("diod was built without multi-user support."
+        msg_exit ("daud was built without multi-user support."
                   " Run as a normal user or add --runasuser or --allsquash options.");
 #endif
     }
@@ -675,6 +675,8 @@ _service_run (srvmode_t mode, int rfdno, int wfdno)
         flags |= SRV_FLAGS_NOUSERDB;
     if (!(ss.srv = np_srv_create (nwthreads, flags))) /* starts threads */
         errn_exit (np_rerror (), "np_srv_create");
+    if ((flags & SRV_FLAGS_NOUSERDB) && diod_conf_opt_runasuid ())
+        np_srv_set_default_uid (ss.srv, diod_conf_get_runasuid ());
     if (diod_init (ss.srv) < 0)
         errn_exit (np_rerror (), "diod_init");
 
