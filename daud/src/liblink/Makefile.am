@@ -8,4 +8,6 @@ liblink_a_SOURCES = \
 	link.c \
 	link.h \
 	auth.c \
-	auth.h
+	auth.h \
+	crypto.c \
+	crypto.h

@@ -25,3 +25,4 @@ Makefile.in
 /tests/test_link
 /tests/test_resume
 *~
+/tests/test_scram
