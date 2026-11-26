@@ -64,3 +64,4 @@ core.*
 /config/tap-driver.sh
 /t/test-results/
 /t/trash-directory.*
+*~
