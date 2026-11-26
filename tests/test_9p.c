@@ -82,14 +82,14 @@ static int walk(int fd, uint32_t fid, uint32_t newfid, const char *name)
 
 int main(void)
 {
-    char dir[256], share[300], sock[300], data[300], other[300];
+    char dir[64], share[128], sock[100], data[160], other[128];
     const char *daud = getenv("P9SHARE_DAUD");
     struct sockaddr_un a;
     struct msg q, r;
     pid_t pid;
     int fd, i, tries, st;
     FILE *f;
-    char buf[64];
+    char buf[256], rb[64];
 
     if (!daud || access(daud, X_OK) != 0) {
         fprintf(stderr, "no daud to test (P9SHARE_DAUD)\n");
@@ -143,7 +143,7 @@ int main(void)
     snprintf(buf, sizeof buf, "%s/new.txt", share);
     f = fopen(buf, "r");
     CHECK(f != NULL);
-    if (f) { memset(buf, 0, sizeof buf); CHECK(fgets(buf, sizeof buf, f) && !strcmp(buf, "written")); fclose(f); }
+    if (f) { memset(rb, 0, sizeof rb); CHECK(fgets(rb, sizeof rb, f) && !strcmp(rb, "written")); fclose(f); }
     close(fd);
 
     /* what it refuses: another user's uid, and a directory that is not exported */

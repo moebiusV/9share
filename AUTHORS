@@ -1,1 +1,4 @@
 p9share was written by David Walther.
+
+daud is a fork of diod, by Jim Garlick (Lawrence Livermore National Security, LLC) and others, see daud/AUTHORS; its libnpfs
+and libnpclient come from Latchesar Ionkov's npfs.

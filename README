@@ -8,11 +8,11 @@ On the machine that should show them, once:
 
     sudo p9share mount alice projects /mnt/projects
 
-That is all.  The exporting machine dials out to the other with ssh, so the
-receiving side needs no open port and no server for you to configure.  A daemon
-that starts at boot keeps the tunnel up (restarting it when it drops) and keeps the
-mount right: mounted while the tunnel is there, unmounted when it is not.  The user
-on the receiving machine switches it without sudo:
+That is all.  The machine with the files dials out to the other with ssh, so the
+machine that shows them needs no open port and no server for you to configure.  A
+daemon that starts at boot keeps the tunnel up (starting it again when it drops) and
+keeps the mount right: mounted while the tunnel is there, unmounted when it is not.
+The user on the receiving machine switches it without sudo:
 
     p9share ro projects        read-only
     p9share rw projects        read-write
@@ -20,22 +20,37 @@ on the receiving machine switches it without sudo:
 
     p9share status             what is shared, what is mounted, what is running
 
-Several directories, several machines, and both directions at once all work; each
-is one more line.  Nothing happens on a machine until something is configured on it.
+Several directories, several machines, and both directions at once are each one more
+block of configuration.  Nothing happens on a machine until something is configured on it.
 
-How it works: the exporter runs diod (the 9P2000.L server) as you, unprivileged, on a
-private unix socket; a small relay in front of it supplies the numeric uid an
-unprivileged diod needs; ssh -R hands that socket to the other machine, into the
-user's ~/.p9share/.  The receiver's root daemon mounts it with the kernel's 9p client.
+The configuration is two small files in obconf, the notation of the OpenBSD daemons'
+config files (p9share.conf(5)); the commands above write it, and you may edit it by hand:
 
-Requirements: Debian or Ubuntu (WSL2 too), openssh-client; key-based
-ssh from the exporter to the receiver (BatchMode: no password prompts).
+    export "projects" {             # ~/.config/p9share/p9share.conf, where the files are
+        directory /srv/projects
+        host bob.example.org
+    }
+
+    mount "projects" {              # /etc/p9share/p9share.conf, where they are shown
+        user alice
+        at /mnt/projects
+    }
+
+How it works: p9share runs daud, a 9P2000.L file server (a fork of diod, in this
+package), as you, unprivileged, on a private unix socket, and ssh -R hands that socket
+to the other machine, into the user's ~/.p9share/.  The root daemon there mounts it with
+the kernel's 9p client.
+
+Requirements: Linux with the 9p module (Debian, Ubuntu, WSL2 and others), openssh-client,
+and key-based ssh from the machine with the files to the one that shows them.
+To build from source: a C compiler, autoconf, automake and autoconf-archive.
 
 Security: the export is the directory you name, with your rights, and the mount is
-nosuid,nodev.  The 9P socket on the receiving machine belongs to that machine's user;
-any local user there who can reach the mount point sees the files as you.  Do not
-export a directory to a machine whose users you do not trust.
+nosuid,nodev.  The socket on the receiving machine belongs to that machine's user and is
+mounted only if it answers; any local user there who can reach the mount point sees the
+files as you.  Do not export a directory to a machine whose users you do not trust.
 
 On WSL2 there is no systemd: sudo p9share wsl-boot puts the daemon in /etc/wsl.conf.
 
-See INSTALL, p9share(8), p9share-exports(5), p9share-mounts(5).  License: ISC.
+See INSTALL, HACKING, p9share(8), p9share.conf(5), daud(8).
+License: GPL-2.0-or-later for p9share; daud is diod's licence (GPL-2, with libnpfs MIT-like), see COPYING and daud/COPYING.

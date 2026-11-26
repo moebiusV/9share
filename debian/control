@@ -1,0 +1,22 @@
+Source: p9share
+Section: net
+Priority: optional
+Maintainer: David Walther <david@clearbrookdistillery.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.7.0
+Homepage: https://github.com/moebiusV/p9share
+Rules-Requires-Root: no
+
+Package: p9share
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, openssh-client, kmod
+Recommends: openssh-server
+Description: share directories between machines over 9P, through ssh
+ One command on the machine that has the files (p9share export DIR HOST)
+ and one on the machine that shows them (sudo p9share mount USER NAME DIR).
+ The machine with the files dials out with ssh, so the other needs no open
+ port.  A root daemon, started at boot, keeps the tunnels up and the mounts
+ right (read-write, read-only or off, switched by the user without sudo).
+ .
+ Includes daud, a 9P2000.L file server forked from diod.  Does nothing until
+ something is configured.

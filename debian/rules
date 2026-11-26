@@ -1,0 +1,7 @@
+#!/usr/bin/make -f
+# the source tarball carries configure (made by autoreconf, see HACKING): the package is built from it as it is
+%:
+	dh $@ --without autoreconf
+
+override_dh_auto_test:
+	$(MAKE) -C tests check

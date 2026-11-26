@@ -6,7 +6,7 @@ endif
 
 EXTRA_DIST = README INSTALL HACKING NEWS ChangeLog AUTHORS COPYING \
              grammars/p9share.hbnf tools/regen-conf.sh systemd/p9share.service.in \
-             debian/control debian/rules debian/changelog debian/copyright debian/source/format
+             debian/control debian/rules debian/changelog debian/copyright debian/docs debian/source/format
 
 # the Debian package, built from a clean copy of the source
 deb: dist

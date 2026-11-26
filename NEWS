@@ -1,6 +1,6 @@
 p9share NEWS -- history of user-visible changes
 
 * 0.1.0
-  First package.  p9share export / unexport (as a user), mount / unmount (root), rw / ro / off (as the user), status, wsl-boot; the p9share
-  service (p9share boot) starts at boot, keeps each tunnel up and each mount right.  Replaces the prototype scripts (p9share, p9mode,
-  p9share-mountd): see INSTALL for moving over.
+  First release.  p9share export / unexport (as a user), mount / unmount (root), rw / ro / off (as the user), status, wsl-boot;
+  the p9share service (p9share boot) starts at boot, keeps each tunnel up and each mount right.  The 9P server is daud, a fork of
+  diod made for this package.  Configuration is p9share.conf(5), in obconf.
