@@ -14,7 +14,8 @@ pats=$(
 files=$(git ls-files | grep -v -E '^tests/test_clean\.sh$')
 bad=0
 for p in $pats; do
-    hits=$(echo "$files" | xargs grep -n -I -F -e "$p" 2>/dev/null)
+    # the maintainer line of debian/control and the trailer of a debian/changelog entry are the packager's published identity
+    hits=$(echo "$files" | xargs grep -n -I -F -e "$p" 2>/dev/null | grep -v -E '^debian/control:[0-9]+:Maintainer: |^debian/changelog:[0-9]+: -- ')
     if [ -n "$hits" ]; then echo "this machine's '$p' is in:"; echo "$hits" | head -5; bad=1; fi
 done
 own=$(echo "$files" | grep -v '^daud/')
