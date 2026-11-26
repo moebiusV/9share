@@ -58,6 +58,61 @@ void p9_user_conf_path(const char *home, char *buf, size_t n)
         snprintf(buf, n, "%s/.config/9share/9share.conf", getenv("HOME") ? getenv("HOME") : ".");
 }
 
+/* The link secret of share NAME: HOME's .config/9share/NAME.secret (HOME NULL: where the caller's 9share.conf is).  Returns 0 and
+ * the secret (its first line) when the file is there and usable; 1 when there is no such file (the link then trusts its carrier);
+ * -1 when it is there but must not be used, with the reason in WHY: the link must not fall back to trusting the carrier. */
+int p9_secret_load(const char *home, const char *name, char *secret, size_t n, char *path, size_t pn, char *why, size_t wn)
+{
+    char conf[P9_LINE], line[512], *slash, *nl;
+    struct stat st;
+    FILE *f;
+    int fd;
+
+    if (!nineshare_valid_name(name)) {
+        snprintf(why, wn, "%s is not a usable name", name);
+        return -1;
+    }
+    p9_user_conf_path(home, conf, sizeof conf);
+    if (!(slash = strrchr(conf, '/')))
+        slash = conf;
+    *slash = '\0';
+    if (snprintf(path, pn, "%s/%s.secret", conf, name) >= (int)pn) {
+        snprintf(why, wn, "the path of the secret is too long");
+        return -1;
+    }
+    if ((fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)) < 0) {
+        if (errno == ENOENT)
+            return 1;
+        snprintf(why, wn, "cannot open %s: %s", path, strerror(errno));
+        return -1;
+    }
+    if (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode) || st.st_uid != getuid()) {
+        close(fd);
+        snprintf(why, wn, "%s must be a regular file of this user", path);
+        return -1;
+    }
+    if (st.st_mode & 077) {
+        close(fd);
+        snprintf(why, wn, "%s must not be readable by anyone but its owner (chmod 600)", path);
+        return -1;
+    }
+    if (!(f = fdopen(fd, "r"))) {
+        close(fd);
+        snprintf(why, wn, "cannot read %s", path);
+        return -1;
+    }
+    if (!fgets(line, sizeof line, f) || !(nl = strpbrk(line, "\r\n")) || nl == line || (size_t)(nl - line) >= n) {
+        fclose(f);
+        snprintf(why, wn, "%s must hold the secret, up to %d characters, on its first line", path, (int)n - 1);
+        return -1;
+    }
+    *nl = '\0';
+    fclose(f);
+    snprintf(secret, n, "%s", line);
+    memset(line, 0, sizeof line);
+    return 0;
+}
+
 void p9_system_conf_path(char *buf, size_t n)
 {
     snprintf(buf, n, "%s/9share.conf", p9_sysconf_dir());

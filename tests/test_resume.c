@@ -18,6 +18,7 @@
 
 static char dir[96], home[128], share[160], pidfile[160], dlog[160];
 static const char *bin, *daud;
+static char secretf[400];                          /* set when NINESHARE_TEST_SECRET asks for SCRAM on this run */
 
 static uint8_t pat(uint64_t i) { return (uint8_t)((i * 2654435761u) >> 11); }
 
@@ -49,6 +50,9 @@ static pid_t start_daud(void)
         snprintf(uid, sizeof uid, "%u", (unsigned)getuid());
         snprintf(cmd, sizeof cmd, "echo $$ >> %s; exec %s link t", pidfile, bin);
         setenv("HOME", home, 1);
+        if (secretf[0])
+            execl(daud, "daud", "-f", "-n", "-N", "-u", uid, "-e", share, "--dial", cmd, "--hold", "40",
+                  "--link-secret-file", secretf, "-L", "stderr", (char *)NULL);
         execl(daud, "daud", "-f", "-n", "-N", "-u", uid, "-e", share, "--dial", cmd, "--hold", "40", "-L", "stderr", (char *)NULL);
         _exit(127);
     }
@@ -130,6 +134,17 @@ int main(void)
     snprintf(pidfile, sizeof pidfile, "%s/carriers", dir);
     snprintf(dlog, sizeof dlog, "%s/daud.log", dir);
     mkdir(dir, 0700); mkdir(home, 0700); mkdir(share, 0700);
+    if (getenv("NINESHARE_TEST_SECRET")) {          /* both ends read the same secret: daud from this file, the relay from HOME */
+        char d[300];
+        FILE *sf;
+        snprintf(d, sizeof d, "%s/.config", home); mkdir(d, 0700);
+        snprintf(d, sizeof d, "%s/.config/9share", home); mkdir(d, 0700);
+        snprintf(secretf, sizeof secretf, "%s/t.secret", d);
+        sf = fopen(secretf, "w");
+        CHECK(sf != NULL);
+        if (sf) { fputs("a secret for the test\n", sf); fclose(sf); }
+        CHECK(chmod(secretf, 0600) == 0);
+    }
     snprintf(path, sizeof path, "%s/big.bin", share);
     f = fopen(path, "w");
     for (off = 0; off < size; off++)

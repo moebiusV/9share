@@ -23,6 +23,7 @@ struct runner {
     char   *name, *directory, *host;
     int     hold;
     char    dir[PB];                         /* its state directory: daud's log */
+    struct sstamp { int sr; time_t sec; long nsec; off_t size; ino_t ino; } ss;   /* the secret file as daud was started with it */
     pid_t   pid;
     time_t  t0, wait_until;
     int     delay;
@@ -47,11 +48,50 @@ static void runner_stop(struct runner *r)
     r->pid = 0;
 }
 
+/* the state of the share's secret file: whether it is there, usable, and which version; SPATH is where it is */
+static int secret_stamp(const char *name, struct sstamp *ss, char *spath, size_t pn, char *why, size_t wn)
+{
+    char secret[256];
+    struct stat st;
+    memset(ss, 0, sizeof *ss);
+    ss->sr = p9_secret_load(NULL, name, secret, sizeof secret, spath, pn, why, wn);
+    memset(secret, 0, sizeof secret);
+    if (ss->sr != 1 && stat(spath, &st) == 0) {
+        ss->sec = st.st_mtim.tv_sec;
+        ss->nsec = st.st_mtim.tv_nsec;
+        ss->size = st.st_size;
+        ss->ino = st.st_ino;
+    }
+    return ss->sr;
+}
+
 static void runner_start(struct runner *r, time_t now)
 {
-    char uid[32], hold[16], cmd[2 * P9_LINE], log[PB + 16];
-    char *argv[] = { (char *)p9_daud(), "-f", "-n", "-N", "-u", uid, "-e", r->directory, "--dial", cmd, "--hold", hold,
-                     "-L", "stderr", NULL };
+    char uid[32], hold[16], cmd[2 * P9_LINE], log[PB + 16], spath[P9_LINE], why[P9_LINE + 64];
+    char *argv[16];
+    int ac = 0;
+    struct sstamp ss;
+    /* a secret file makes the link prove it with SCRAM; one that is there but unusable stops the export (the link must
+     * not quietly fall back to trusting the carrier) */
+    if (secret_stamp(r->name, &ss, spath, sizeof spath, why, sizeof why) < 0) {
+        p9_log("%s: not started: %s", r->name, why);
+        r->wait_until = now + 30;
+        r->ss = ss;
+        return;
+    }
+    r->ss = ss;
+    argv[ac++] = (char *)p9_daud();
+    argv[ac++] = "-f"; argv[ac++] = "-n"; argv[ac++] = "-N";
+    argv[ac++] = "-u"; argv[ac++] = uid;
+    argv[ac++] = "-e"; argv[ac++] = r->directory;
+    argv[ac++] = "--dial"; argv[ac++] = cmd;
+    argv[ac++] = "--hold"; argv[ac++] = hold;
+    if (ss.sr == 0) {
+        argv[ac++] = "--link-secret-file";
+        argv[ac++] = spath;
+    }
+    argv[ac++] = "-L"; argv[ac++] = "stderr";
+    argv[ac] = NULL;
     snprintf(uid, sizeof uid, "%u", (unsigned)getuid());
     snprintf(hold, sizeof hold, "%d", r->hold ? r->hold : DEFAULT_HOLD);
     /* the carrier: ssh, which runs `9share link` on the other machine (names and host were checked when the file was read) */
@@ -80,6 +120,17 @@ static void runner_tick(struct runner *r)
 {
     time_t now = time(NULL);
     int st;
+    char spath[P9_LINE], why[P9_LINE + 64];
+    struct sstamp ss;
+    if (r->pid > 0 || r->ss.sr < 0) {                            /* running, or held back by an unusable secret */
+        secret_stamp(r->name, &ss, spath, sizeof spath, why, sizeof why);
+        if (ss.sr != r->ss.sr || ss.sec != r->ss.sec || ss.nsec != r->ss.nsec || ss.size != r->ss.size || ss.ino != r->ss.ino) {
+            p9_log("%s: the secret changed%s", r->name, r->pid > 0 ? "; restarting" : "");   /* appeared, went, or was replaced */
+            runner_stop(r);
+            r->wait_until = 0;
+            r->delay = 1;
+        }
+    }
     if (r->pid > 0 && waitpid(r->pid, &st, WNOHANG) == r->pid) {
         if (now - r->t0 > 60)
             r->delay = 1;

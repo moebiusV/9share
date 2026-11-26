@@ -133,11 +133,22 @@ int p9_relay(int argc, char **argv)
             if (c >= 0) {
                 struct ucred cr;
                 socklen_t l = sizeof cr;
-                if (getsockopt(c, SOL_SOCKET, SO_PEERCRED, &cr, &l) == 0 && cr.uid == me && lk_attach(lk, c) == 0)
-                    ;
-                else {
+                if (getsockopt(c, SOL_SOCKET, SO_PEERCRED, &cr, &l) != 0 || cr.uid != me) {
                     say(ctl, "LOG a carrier from another user was refused");
                     close(c);
+                } else {
+                    /* the secret is read for each carrier, so that `9share pair` takes effect without a restart; a file that
+                     * is there but unusable refuses the carrier (never a fall back to trusting it) */
+                    char secret[256], spath[P9_LINE], swhy[P9_LINE + 64];
+                    int sr = p9_secret_load(getenv("HOME"), argv[0], secret, sizeof secret, spath, sizeof spath, swhy, sizeof swhy);
+                    if (sr < 0) {
+                        say(ctl, "LOG a carrier was refused: %s", swhy);
+                        close(c);
+                    } else if (lk_set_secret(lk, sr == 0 ? secret : NULL) < 0 || lk_attach(lk, c) < 0) {
+                        say(ctl, "LOG a carrier could not be taken");
+                        close(c);
+                    }
+                    memset(secret, 0, sizeof secret);
                 }
             }
         }

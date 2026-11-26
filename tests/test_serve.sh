@@ -58,6 +58,21 @@ sed -i '/^export "two" {/,/^}/d' "$HOME/.config/9share/9share.conf"
 check "a removed export is stopped" 'waitfor "! pgrep -f -- \"second.example.org 9share link two\" >/dev/null"'
 check "the one that stays is still up" 'pgrep -f -- "other.example.org 9share link one" >/dev/null'
 
+# a secret file turns on SCRAM: daud is started again with it; an unusable one stops the export; fixing or removing it restarts it
+SEC=$HOME/.config/9share/one.secret
+check "without a secret file daud is given no secret" '! pgrep -f -- "9share link one --hold 120 --link-secret-file" >/dev/null'
+( umask 077; echo "correct horse" > "$SEC" )
+check "a secret file restarts the export with --link-secret-file" 'waitfor "pgrep -f -- \"9share link one --hold 120 --link-secret-file $SEC\" >/dev/null"'
+chmod 644 "$SEC"
+check "a secret others can read stops the export" 'waitfor "! pgrep -f -- \"other.example.org 9share link one\" >/dev/null"'
+check "and the reason is reported" 'waitfor "grep -q \"one: not started: .*must not be readable\" \"$T/serve.log\""'
+chmod 600 "$SEC"
+check "making it private starts the export again, at once" 'waitfor "pgrep -f -- \"9share link one --hold 120 --link-secret-file $SEC\" >/dev/null"'
+: > "$SEC"; chmod 600 "$SEC"
+check "an empty secret stops the export" 'waitfor "! pgrep -f -- \"other.example.org 9share link one\" >/dev/null"'
+rm -f "$SEC"
+check "removing the file starts it again without a secret" 'waitfor "pgrep -f -- \"9share link one --hold 120 -L stderr\" >/dev/null"'
+
 # a block with a mistake is reported and left out
 cat >> "$HOME/.config/9share/9share.conf" <<EOC
 export "bad" {

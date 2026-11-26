@@ -24,6 +24,7 @@ void  p9_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 const char *p9_sysconf_dir(void);                 /* /etc/9share, or $NINESHARE_SYSCONFDIR (tests) */
 const char *p9_daud(void);                        /* the daud program, or $NINESHARE_DAUD (tests) */
 void  p9_user_conf_path(const char *home, char *buf, size_t n);   /* HOME's 9share.conf; NULL: the caller's */
+int   p9_secret_load(const char *home, const char *name, char *secret, size_t n, char *path, size_t pn, char *why, size_t wn);
 void  p9_system_conf_path(char *buf, size_t n);
 void  p9_state_dir(char *buf, size_t n);
 int   p9_mkdir_p(const char *path, mode_t mode);
