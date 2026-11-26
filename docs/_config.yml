@@ -1,0 +1,8 @@
+# GitHub Pages (Jekyll) settings for the project site
+title: p9share
+description: Share directories between machines over 9P, through ssh. One command on each side.
+theme: jekyll-theme-cayman
+show_downloads: false
+markdown: kramdown
+kramdown:
+  parse_block_html: true
