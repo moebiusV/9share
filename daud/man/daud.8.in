@@ -90,6 +90,22 @@ Set the debug mask.  The bit values are:
 .TP
 .I "-c, --config-file PATH"
 Set config file path.
+.TP
+.I "--dial COMMAND"
+Serve one export over a resumable link, as 9share does: run COMMAND with its standard input and output as the carrier of the
+link (9share runs ssh to the other machine, where \fB9share link\fR joins it to the receiving relay), and run it again whenever
+it dies.  The 9P connection above the link, with the fids the server holds for it, does not notice a carrier that breaks: each end
+keeps the bytes the other has not acknowledged, and after a new carrier is attached resends exactly what is missing, so no byte is
+lost or delivered twice.  If the other end no longer knows the session (the receiving machine restarted), daud begins a new one.
+The command is run by the shell and is killed when daud ends.
+.TP
+.I "--hold SECONDS"
+With \fB--dial\fR: how long the connection waits for a new carrier before the session is given up (default 600).
+.TP
+.I "--link-secret-file FILE"
+With \fB--dial\fR: make the link prove a shared secret, the first line of FILE, on every carrier, with SCRAM-SHA-256 (RFC 7677;
+no channel binding; each end proves the secret to the other).  FILE must be readable by its owner alone.  Without it the link trusts
+its carrier.  \fB9share pair\fR makes the secret on both machines.
 .SH SECURITY
 \fBdiod\fR optionally uses MUNGE for authentication.
 Briefly, a MUNGE credential is a user's uid and gid plus optional payload,

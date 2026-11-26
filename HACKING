@@ -3,11 +3,15 @@ Working on 9share
 Layout
   src/              9share: main.c (the commands' names), cmds.c (export, mount, status ...), serve.c (the exporter), boot.c (the root
                     daemon and the mounts), util.c (files, paths, running programs, editing a config file's text), conf.c (the checks)
+  src/relay.c       the receiving end of a link (`9share relay`, run by the daemon as the mount's user; `9share link`, run by ssh)
   src/9share_conf.c   the parser of 9share.conf: GENERATED, see below; src/hbnf_conf.{c,h} are its runtime support
   grammars/         9share.hbnf, the grammar of 9share.conf
+  daud/src/liblink/ the resumable link (link.c), SCRAM-SHA-256 (auth.c) and its hash code (crypto.c); used by daud and by 9share
+  tools/            9share-init (finds the init system), 9share-setup (the questions), regen-conf.sh
+  etc/              the template of /etc/9share/9share.conf
   daud/             daud, the 9P server: diod v1.1.0 (git subtree of upstream, history kept) with our changes
   tests/            C tests and shell tests, run by `make check`
-  man/, systemd/, debian/
+  man/, systemd/, debian/ (the init script, postinst and prerm too)
 
 The parser of 9share.conf
   src/9share_conf.c is made by hbnf, the parser generator meta compiler (https://github.com/moebiusV/hbnf), from grammars/9share.hbnf.
@@ -29,3 +33,8 @@ daud
 
 Nothing in the repository may name a machine, a local user or a local path: tests/test_clean.sh looks for the ones of the machine
 it runs on.  Examples use alice, bob, example.org and /srv/projects.
+
+Tests
+  `make -C tests check` needs no root.  Do not run the top-level `make check` casually: it also runs daud's own suite, which is slow.
+  tests/test_serve.sh finds its processes with `pgrep -f`, which matches the whole command line of any process: a command you run
+  the suite from that itself contains the text `--dial .* 9share link` or `sleep 600` (an editing script, say) makes its last check fail.

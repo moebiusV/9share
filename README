@@ -1,30 +1,41 @@
 9share -- share directories between machines over 9P, through ssh
 
-On the machine that has the files, as yourself:
+9share makes a directory on one machine appear at a mount point on another, through ssh.  The
+machine with the files dials out, so the other needs no open port and no server to configure,
+and a connection that drops is picked up again where it stopped.  Install the same package on
+both machines; nothing happens on a machine until something is configured on it.
 
-    9share export /srv/projects bob.example.org
+Fast path
 
-On the machine that should show them, once:
+    Needs 9share on both machines, and ssh from the first to the second without a password
+    (ssh HOST true).  On the machine that has the files, as yourself:
 
-    sudo 9share mount alice projects /mnt/projects
+        9share export /srv/projects bob.example.org
 
-That is all.  The machine with the files dials out to the other with ssh, so the
-machine that shows them needs no open port and no server for you to configure.  A
-daemon that starts at boot keeps the tunnel up (starting it again when it drops) and
-keeps the mount right: mounted while the tunnel is there, unmounted when it is not.
-The user on the receiving machine switches it without sudo:
+    On bob.example.org, once, as root (the line above prints it, ready to copy):
 
-    9share ro projects        read-only
+        sudo 9share mount alice projects /mnt/projects
+
+    /srv/projects now appears at /mnt/projects, and stays there.  alice is the account on
+    bob.example.org that ssh logs in as; projects is the share's name, by default the
+    directory's own.  To be asked instead of typing these, run 9share setup on either machine:
+    three questions, the same result.
+
+That is all of it.  The rest is optional:
+
+    9share ro projects        read-only (as that account, no sudo)
     9share rw projects        read-write
     9share off projects       not mounted
-
     9share status             what is shared, what is mounted, what is running
+    9share pair projects bob.example.org
+                              make a secret on both machines, so that each connection
+                              proves it as well as trusting ssh (needs 9share on bob)
+    9share unexport projects  stop sharing
 
-Several directories, several machines, and both directions at once are each one more
-block of configuration.  Nothing happens on a machine until something is configured on it.
-
-The configuration is two small files in obconf, the notation of the OpenBSD daemons'
-config files (9share.conf(5)); the commands above write it, and you may edit it by hand:
+Several directories, several machines, and both directions at once are each one more block
+of configuration.  The configuration is two small files in obconf, the notation of the
+OpenBSD daemons' config files (9share.conf(5)); the commands write it and you may edit it
+by hand:
 
     export "projects" {             # ~/.config/9share/9share.conf, where the files are
         directory /srv/projects
@@ -36,21 +47,29 @@ config files (9share.conf(5)); the commands above write it, and you may edit it 
         at /mnt/projects
     }
 
-How it works: 9share runs daud, a 9P2000.L file server (a fork of diod, in this
-package), as you, unprivileged, on a private unix socket, and ssh -R hands that socket
-to the other machine, into the user's ~/.9share/.  The root daemon there mounts it with
-the kernel's 9p client.
+Installing: the package finds out how the machine starts services and starts the daemon at
+boot that way: systemd, WSL2 (with or without systemd), sysvinit, OpenRC.  Where it cannot
+(a container, runit) it says what to run.  It starts with nothing shared, a commented
+template in /etc/9share/9share.conf, and a message to run 9share setup.
+
+How it works: 9share runs daud, a 9P2000.L file server (a fork of diod, in this package), as
+you, unprivileged.  daud runs ssh to the other machine, where 9share link joins ssh to a
+relay of the mount's user; the 9P connection rides a resumable link over that, so when ssh
+drops and is run again, each end resends the bytes the other has not acknowledged and the
+connection, with its open files, never notices.  The root daemon there mounts it with the
+kernel's 9p client.  A mount waits for a lost connection for up to its hold time (600
+seconds unless set), then is removed, and comes back when the exporter does.
 
 Requirements: Linux with the 9p module (Debian, Ubuntu, WSL2 and others), openssh-client,
 and key-based ssh from the machine with the files to the one that shows them.
 To build from source: a C compiler, autoconf, automake and autoconf-archive.
 
 Security: the export is the directory you name, with your rights, and the mount is
-nosuid,nodev.  The socket on the receiving machine belongs to that machine's user and is
-mounted only if it answers; any local user there who can reach the mount point sees the
-files as you.  Do not export a directory to a machine whose users you do not trust.
+nosuid,nodev.  Any local user on the receiving machine who can reach the mount point sees
+the files as you: do not export a directory to a machine whose users you do not trust.
+The relay takes a connection only from a process of the mount's user, and, once you have run
+9share pair, only one that proves the shared secret (SCRAM-SHA-256).  The secret does not
+encrypt anything; ssh does.
 
-On WSL2 there is no systemd: sudo 9share wsl-boot puts the daemon in /etc/wsl.conf.
-
-See INSTALL, HACKING, 9share(8), 9share.conf(5), daud(8).
+See INSTALL, HACKING, 9share(8), 9share-setup(1), 9share.conf(5), daud(8).
 License: GPL-2.0-or-later for 9share; daud is diod's licence (GPL-2, with libnpfs MIT-like), see COPYING and daud/COPYING.

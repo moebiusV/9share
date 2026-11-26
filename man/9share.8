@@ -2,15 +2,21 @@
 .SH NAME
 9share \- share directories between machines over 9P, through ssh
 .SH SYNOPSIS
+.B 9share setup
+.br
 .B 9share export
 .I DIR HOST
 .RI [ NAME ]
 .br
-.B 9share unexport
-.I NAME
-.br
 .B sudo 9share mount
 .I USER NAME DIR
+.br
+.B 9share pair
+.RB [ \-\-force ]
+.I NAME HOST
+.br
+.B 9share unexport
+.I NAME
 .br
 .B sudo 9share unmount
 .I NAME
@@ -22,6 +28,7 @@
 .B 9share status
 .br
 .B sudo 9share wsl\-boot
+.RB [ \-\-remove ]
 .br
 .B 9share boot
 .RB [ \-\-detach ]
@@ -29,13 +36,84 @@
 .B 9share serve
 .SH DESCRIPTION
 .B 9share
-makes a directory on one machine appear on another, with the kernel's 9p client, through an ssh tunnel that the machine with the
-files opens.  The machine that shows the files needs no open port.  Install the same package on both machines; a machine is an
-exporter, a receiver or both, according to what is configured on it, and does nothing until something is.
-.PP
-The server is
+makes a directory on one machine appear at a mount point on another, through ssh: on the machine that has the files you name the
+directory and the other machine, and on the other you name where it should appear.  The machine with the files dials out, so the
+other needs no open port and no server to configure, and a connection that drops is picked up again where it stopped.  Install the
+same package on both machines; nothing happens on a machine until something is configured on it.  The file server is
 .BR daud (8),
 a fork of diod, run as the exporting user.
+.SH QUICK START
+Install the package on both machines, and make
+.B ssh HOST true
+work without a password from the machine that has the files to the one that should show them.  Then, two commands.
+.PP
+On the machine that has the files, as yourself:
+.PP
+.RS
+.nf
+9share export /srv/projects bob.example.org
+.fi
+.RE
+.PP
+On
+.B bob.example.org
+(the command is printed by the first one, ready to copy), once, as root:
+.PP
+.RS
+.nf
+sudo 9share mount alice projects /mnt/projects
+.fi
+.RE
+.PP
+.I /srv/projects
+now appears at
+.IR /mnt/projects ,
+and stays there: the machine with the files dials out, so
+.B bob.example.org
+needs no open port, and a connection that drops is picked up again where it stopped.
+.I alice
+is the account on
+.B bob.example.org
+that ssh logs in as (the one you would name in
+.BR "ssh alice@bob.example.org" ),
+and
+.I projects
+is the name of the share, by default the directory's own name.
+.PP
+Neither machine has to be configured first, and nothing happens on a machine until something is.  To be asked instead of typing
+these, run
+.B 9share setup
+on either machine: it asks three questions and does the same.  To make each connection prove a secret as well as trusting ssh,
+run
+.B 9share pair projects bob.example.org
+once.  Switch the mount, without sudo, with
+.BR "9share ro projects" ,
+.B "9share rw projects"
+or
+.BR "9share off projects" ;
+.B 9share status
+shows what is shared, what is mounted and what is running.
+.SH HOW IT WORKS
+The 9P connection of daud rides a
+.IR "resumable link" :
+each end counts the bytes it has sent and keeps those the other has not acknowledged, so when ssh breaks and is run again, the
+two ends say how much each has received and resend the rest.  Nothing is lost, nothing is delivered twice, and the connection and
+the files it has open do not notice.  The mount stays while the connection is down, and what the kernel asks waits, for up to the
+.B hold
+time of the share (600 seconds unless the configuration says otherwise).  After that the session is given up, the mount is
+removed, and a new one begins when the exporter is back.
+.SH COMMANDS
+.SS Setting up
+.TP
+.B setup
+Ask what is needed and write the simple, usual configuration: on the machine that has the files, which directory, shared with
+which machine, under which name, and whether to make a secret as well; on the machine that shows them, which account, which share,
+and where it appears.  Or give the answers as arguments:
+.B "9share setup \-\-export DIR HOST [NAME] [\-\-no\-pair]"
+or
+.BR "9share setup \-\-mount USER NAME DIR" .
+See
+.BR 9share\-setup (1).
 .SS On the machine that has the files (as an ordinary user)
 .TP
 .BI "export " "DIR HOST " [ NAME ]
@@ -45,13 +123,24 @@ the running service notices within a few seconds.  Prints the command to run on 
 .TP
 .BI unexport " NAME"
 Stop sharing it.
+.TP
+.BR pair " [\fB\-\-force\fP] \fINAME HOST\fP"
+Make a random secret for the share and put it on both machines, in
+.I ~/.config/9share/NAME.secret
+(mode 0600), the one here and the one on HOST (in the home of the account that ssh logs in as there), through ssh, with the secret
+on standard input and never on a command line.  From then on every connection proves the secret to the other end with
+SCRAM-SHA-256 as well as trusting ssh; the export here and the mount there pick it up by themselves.  The other machine is done
+first, so that a failure leaves this one as it was.  A secret that exists on either machine is not replaced without
+.BR \-\-force .
+HOST needs 9share installed.  Without a secret file the link trusts ssh alone.  A secret file that exists but cannot be used (not
+the owner's, or readable by others) stops the share rather than falling back to trusting ssh.
 .SS On the machine that shows them
 .TP
 .BI "mount " "USER NAME DIR"
 (root) Show the share NAME that arrives in the account USER of this machine (the account the exporter logs in as) at DIR.  The block
 is added to
 .IR /etc/9share/9share.conf .
-It is mounted while the exporter's tunnel is up and unmounted while it is not.
+It is mounted while the exporter's connection is up and unmounted when the session is given up.
 .TP
 .BI unmount " NAME"
 (root) Remove it and unmount.
@@ -63,11 +152,13 @@ It is mounted while the exporter's tunnel is up and unmounted while it is not.
 .B status
 What is shared, what is mounted, and whether the daemon runs.
 .TP
-.B wsl\-boot
+.BR wsl\-boot " [\fB\-\-remove\fP]"
 (root, WSL2) Put the daemon in the [boot] command of
 .IR /etc/wsl.conf ,
 which WSL2 has instead of systemd.  A command already there is kept and runs first, from
 .IR /etc/9share/wsl\-boot .
+.B \-\-remove
+takes 9share out again and gives the command that was kept back.  The package does this by itself; see below.
 .SS Behind these
 .TP
 .B boot
@@ -79,29 +170,81 @@ in the background, logging to /var/log/9share.log).  Every two seconds it starts
 .B serve
 for each user who has a configuration file and no
 .B serve
-running, and makes the mounts of the system configuration agree with the tunnels and the users' modes.  A mount whose tunnel has
-died is unmounted lazily and mounted again when the tunnel is back.
+running, and for each mount of the system configuration it keeps a relay (below) and the kernel's end of a socket pair; when the
+relay reports that the exporter's session has begun it mounts over that socket (with the 9p option
+.BR trans=fd ),
+and when the relay ends it unmounts.  It follows each user's mode.  With nothing configured it has nothing to do.
 .TP
 .B serve
 One user's exports, in the foreground.  For each export it runs
-.B daud
-(as that user, on a private unix socket in
-.IR ~/.local/state/9share/NAME/ )
+.B "daud \-\-dial"
+with
+.B ssh
+to the other machine as the carrier; ssh runs
+.B "9share link NAME"
+there.  It is started again when it dies, after 1, 2, 4 ... 30 seconds; ssh runs with ServerAliveInterval 15 and ServerAliveCountMax
+3, so a dead connection is noticed in about 45 seconds and a new one is made.  The configuration file is read again whenever it
+changes, and only the exports whose block changed are restarted; so is the export whose secret file appears, changes or goes.
+.TP
+.B relay
+The receiving end of one mount, run by the daemon as the mount's user: it holds the link's session and one end of the socket pair, and
+listens on
+.IR ~/.9share/NAME.link .
+It accepts a carrier only from a process of that user, and with a secret file only from one that proves the secret; the secret is
+read again for each carrier.
+.TP
+.B link
+What ssh runs on the receiving machine: joins its standard input and output to the relay's socket.  It is a pipe, and nothing else.
+.SH STARTING AT BOOT
+The package finds out how the machine starts services and does the right thing; it never fails the installation, and says what it
+could not do.
+.TP
+.B systemd
+The unit
+.B 9share.service
+is enabled and started.  (This includes WSL2 when
+.I /etc/wsl.conf
+says systemd=true.)
+.TP
+.B WSL2 without systemd
+.B 9share wsl\-boot
+is run, and the daemon is started at once.
+.TP
+.B sysvinit, OpenRC
+The init script
+.I /etc/init.d/9share
+is enabled and started (with
+.B update\-rc.d
+or
+.BR rc\-update ).
+.TP
+.B runit, or no init system at all (a container)
+Nothing is set up, and the message says to run
+.B "sudo 9share boot \-\-detach"
+or to write the service.
+.PP
+The helper that does this,
+.IR 9share\-init ,
+is installed in the libexec directory of 9share (for the package,
+.IR /usr/lib/9share ),
+and can be run again:
+.B "9share\-init detect"
+prints the kind it found;
+.B "9share\-init enable"
 and
-.BR "ssh \-R" ,
-which puts that socket at
-.I ~/.9share/NAME.sock
-on HOST.  Each is started again when it dies, after 1, 2, 4 ... 30 seconds; ssh runs with ServerAliveInterval 15 and
-ServerAliveCountMax 3, so a dead link is noticed in about 45 seconds.  Before it starts ssh it prepares HOST: it makes
-.IR ~/.9share ,
-removes the stale socket a dead tunnel left, and writes
-.I ~/.9share/NAME.info
-with the user name and directory that the mount asks daud for.  The configuration file is read again whenever it changes, and only
-the exports whose block changed are restarted.
+.B "9share\-init disable"
+do and undo it.  See
+.BR 9share\-init (8).
 .SH SECURITY
 Mounts are made nosuid,nodev, with access=any: any user on the receiving machine who can reach the mount point sees the files with
-the exporting user's rights.  The mount is only made from a socket that belongs to USER and that answers, and every value that goes
-from the exporter's files into a mount option is checked first.  Do not export a directory to a machine whose users you do not trust.
+the exporting user's rights.  The receiving machine mounts only over a connection that the relay of the mount's user accepted, which
+is a process of that user; with a secret (see
+.BR pair )
+only one that proved the secret as well.  Every value that goes from the exporter into a mount option is checked first.  Do not
+export a directory to a machine whose users you do not trust.
+.PP
+The secret protects the link against another process that can reach the relay's socket, or an ssh login that is not the exporter's.
+It does not make the 9P traffic secret: that is ssh's work.
 .SH ENVIRONMENT
 .TP
 .B NINESHARE_SYSCONFDIR
@@ -109,21 +252,40 @@ Where the system configuration is looked for (default: the sysconfdir given to c
 .TP
 .B NINESHARE_DAUD
 The daud program to run (default: the one installed with 9share).  For tests.
+.TP
+.B NINESHARE_WSL_CONF
+The file that
+.B wsl\-boot
+edits (default /etc/wsl.conf).  For tests.
 .SH FILES
 .TP
 .I ~/.config/9share/9share.conf
 .TQ
 .I /etc/9share/9share.conf
-The exports of a user and the mounts of a machine.  See
+The exports of a user and the mounts of a machine.  The package installs the second as a commented template with no blocks.  See
 .BR 9share.conf (5).
+.TP
+.I ~/.config/9share/NAME.secret
+The secret of a share, one line, mode 0600, made by
+.BR "9share pair" .
+There is one on each machine; the file's presence turns on SCRAM-SHA-256 for that share.
 .TP
 .I ~/.config/9share/mode.d/NAME
 The mode (rw, ro, off) of a mount, written by
 .BR "9share rw|ro|off" .
 .TP
-.I ~/.9share/
-On the receiving machine: the socket and the .info file of each share.
+.I ~/.9share/NAME.link
+On the receiving machine: the unix socket of the relay of a mount.
+.TP
+.I ~/.local/state/9share/NAME/daud.log
+The log of the daud of an export.
+.TP
+.I /var/log/9share.log
+The log of
+.B "9share boot \-\-detach" .
 .SH SEE ALSO
+.BR 9share\-setup (1),
+.BR 9share\-init (8),
 .BR 9share.conf (5),
 .BR daud (8),
 .BR ssh (1),

@@ -1,0 +1,66 @@
+.TH 9SHARE-SETUP 1 "2026" "9share" "User Commands"
+.SH NAME
+9share-setup \- write the simple, usual configuration of 9share
+.SH SYNOPSIS
+.B 9share setup
+.br
+.B 9share setup \-\-export
+.I DIR HOST
+.RI [ NAME ]
+.RB [ \-\-no\-pair ]
+.br
+.B 9share setup \-\-mount
+.I USER NAME DIR
+.SH DESCRIPTION
+.B 9share setup
+sets up the usual case of
+.BR 9share (8)
+in a few questions: share one directory of this machine with another machine, or show on this machine a directory that another one
+shares.  It changes nothing until the last question is answered, and does it with the commands that can be typed by hand
+.RB ( "9share export" ,
+.BR "9share pair" ,
+.BR "9share mount" ),
+so what it writes is what they write.  Run it as yourself; it asks sudo for the one step that needs root.
+.PP
+Without arguments, at a terminal, it asks which machine this is (the one that has the files is the first answer and the default).
+.TP
+.B The machine that has the files
+Which directory (default: the current one); which machine should see it, as ssh knows it (a name from
+.IR ~/.ssh/config ,
+or user@host); what the share is called (default: the directory's name); and whether to make a shared secret as well, which needs
+9share installed on that machine already.  Then it adds the export, prints the command to run on the other machine, and makes the
+secret if you said yes.  If the secret cannot be made the share is still set up, and the message says what to run later
+.RB ( "9share pair" ).
+.TP
+.B The machine that shows the files
+Which account on this machine the other machine logs in as (default: yours); what the share is called there; and where it should
+appear (default:
+.IR /mnt/NAME ).
+Then it adds the mount with
+.BR "sudo 9share mount" ,
+and says what to run on the machine that has the files.
+.PP
+With arguments it asks nothing, so that it can be used in a script.
+.TP
+.BI "\-\-export " "DIR HOST " [ NAME ]
+Share DIR with HOST as NAME (default: the directory's name) and make the secret.
+.TP
+.B \-\-no\-pair
+With
+.BR \-\-export :
+do not make a secret.  The share trusts ssh alone.
+.TP
+.BI "\-\-mount " "USER NAME DIR"
+Show USER's share NAME at DIR.
+.SH EXIT STATUS
+0 when what was asked was done (a secret that could not be made is not a failure); 1 when it could not be; 2 for a wrong command line,
+and when there are no arguments and no terminal to ask.
+.SH FILES
+.TP
+.I ~/.config/9share/9share.conf
+.TQ
+.I /etc/9share/9share.conf
+Where the export and the mount are written.
+.SH SEE ALSO
+.BR 9share (8),
+.BR 9share.conf (5)

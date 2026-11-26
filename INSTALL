@@ -4,18 +4,34 @@ From a checkout:    ./autogen.sh && ./configure && make && make check && sudo ma
 From a tarball:     ./configure && make && make check && sudo make install
 As a package:       make deb && sudo apt install ./debbuild/9share_*_*.deb
 
-Install it on both machines.  Then:
+Install it on both machines.  Then, the fast path:
 
   the machine with the files (as yourself):    9share export DIR HOST [NAME]
-  the machine that shows them:                 sudo 9share mount USER NAME DIR
+  the machine that shows them (as root):       sudo 9share mount USER NAME DIR
 
-  (USER is the account on the receiving machine that the exporter logs in to.  `9share export` prints the line to run there.)
-
-The 9share service is enabled by the package and started at boot (sudo systemctl start 9share to start it now).
-From `make install` it is installed but you enable it yourself:  sudo systemctl enable --now 9share
-On WSL2 (no systemd):   sudo 9share wsl-boot      then restart WSL once (wsl.exe --shutdown), or run  sudo 9share boot --detach
+  (USER is the account on the receiving machine that the exporter logs in to.  `9share export` prints the line to run there.
+   Or run `9share setup` on either machine and answer three questions.)
 
 ssh must work without a password from the machine with the files to the one that shows them:   ssh HOST true
 
-`make check` needs no root: it tests the configuration, a real daud over 9P, and the exporter (with a stand-in for ssh).
-The mount itself needs root and the 9p kernel module, so it is not part of it: try it on two machines as above.
+Starting at boot
+  The package finds out how the machine starts services and does it that way (systemd; WSL2 with or without systemd; sysvinit; OpenRC),
+  and says what it could not do.  From `make install` nothing is enabled: run, as root,
+      LIBEXECDIR/9share-init enable          (LIBEXECDIR: where `make install` put it, /usr/local/libexec/9share by default)
+  `9share-init detect` says what kind of machine it found; `9share-init disable` undoes it.  On a container or runit, which have no
+  service to enable, start the daemon with   sudo 9share boot --detach   (it logs to /var/log/9share.log).
+  WSL2 without systemd: the install sets the [boot] command of /etc/wsl.conf; restart WSL once (wsl.exe --shutdown), or it is already
+  started now.  WSL1 cannot mount 9p.
+
+A first installation is empty: /etc/9share/9share.conf is a commented template and nothing is shared or mounted.
+
+Upgrading from the first release (9share 0.1.0, where the exporter ran `ssh -R` and left ~/.9share/NAME.sock and NAME.info on the other machine)
+  Install the new package on BOTH machines: the two ends speak a different protocol and an old end cannot talk to a new one.  The
+  configuration files are unchanged (export and mount blocks), and after the upgrade the old files ~/.9share/NAME.sock and
+  ~/.9share/NAME.info on the receiving machine are no longer used and may be removed.
+
+The secret (optional): `9share pair NAME HOST` makes ~/.config/9share/NAME.secret on both machines; delete both files to go back to
+trusting ssh alone.
+
+`make check` needs no root: it tests the configuration, a real daud over 9P, the link with its secret, the exporter and the setup scripts
+(with a stand-in for ssh).  The mount itself needs root and the 9p kernel module, so it is not part of it: try it on two machines as above.

@@ -66,8 +66,27 @@ Required.
 .B at
 The mount point: an absolute path of letters, digits and . _ + @ \- / (no spaces), created if it is missing.  Required.
 .PP
+Both blocks take one more setting:
+.TP
+.B hold
+How many seconds a connection waits for a new carrier (a new ssh connection) after it was lost, before the session is given up (and the
+mount removed): 1 to 86400, default 600.  While it waits the mount stays and what the kernel asks waits too.  The exporter and the
+receiver each use their own: give both the same.
+.PP
 A name may be used once in a file, and a mount point once.  A block with a mistake in it is reported as
 .IR file:line:\ message
 and left out; the other blocks are used.  A mount point that already holds something that is not 9p is left alone.
+.PP
+The package installs
+.I /etc/9share/9share.conf
+as a template of comments with no blocks: nothing is shared and nothing is mounted until a block is added.
+.B 9share setup
+writes the usual blocks after a few questions.
+.SH FILES
+The secret that makes a share's link prove itself with SCRAM-SHA-256 is not in the configuration: it is the file
+.I ~/.config/9share/NAME.secret
+on each machine, made by
+.BR "9share pair" .
 .SH SEE ALSO
-.BR 9share (8)
+.BR 9share (8),
+.BR 9share\-setup (1)

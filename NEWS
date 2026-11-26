@@ -1,5 +1,15 @@
 9share NEWS -- history of user-visible changes
 
+* Unreleased (after 0.1.0; the version number is not yet chosen)
+  The connection survives a broken ssh: daud and the receiving relay keep a resumable link (the bytes each end has not had
+  acknowledged are resent over the next ssh), so the mount and its open files wait for it up to the new `hold` setting (1 to 86400
+  seconds, default 600) and the mount is removed only after that.  ssh -R and the NAME.sock / NAME.info files are gone; both machines
+  need the new version.
+  9share pair NAME HOST makes one secret on both machines (~/.config/9share/NAME.secret), and then each connection proves it with
+  SCRAM-SHA-256 as well as trusting ssh.
+  9share setup asks three questions and writes the usual configuration.  The package finds out how the machine starts services
+  (systemd, WSL2 with or without systemd, sysvinit, OpenRC) and starts the daemon at boot that way; it starts with nothing shared and a
+  commented /etc/9share/9share.conf.  9share wsl-boot --remove.
 * 0.1.0
   First release.  9share export / unexport (as a user), mount / unmount (root), rw / ro / off (as the user), status, wsl-boot;
   the 9share service (9share boot) starts at boot, keeps each tunnel up and each mount right.  The 9P server is daud, a fork of

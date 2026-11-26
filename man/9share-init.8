@@ -1,0 +1,77 @@
+.TH 9SHARE-INIT 8 "2026" "9share" "System Administration"
+.SH NAME
+9share-init \- make the 9share daemon start at boot the way this machine starts services
+.SH SYNOPSIS
+.B 9share\-init detect
+.br
+.B 9share\-init enable
+.RB [ \-\-from\-package ]
+.br
+.B 9share\-init disable
+.RB [ \-\-from\-package ]
+.SH DESCRIPTION
+.B 9share\-init
+finds out which init system runs this machine and does what that one needs to start the root daemon of
+.BR 9share (8)
+at boot and now.  The package runs it when it is installed and removed; it is installed in the libexec directory of 9share
+(for the package,
+.IR /usr/lib/9share ),
+not in the path, and may be run again by root.  It never fails: what it cannot do it says, with what to type instead.
+.TP
+.B detect
+Print one of
+.BR systemd ,
+.BR wsl2 ,
+.BR wsl1 ,
+.BR openrc ,
+.BR runit ,
+.B sysv
+or
+.BR none .
+systemd is checked first (it includes WSL2 with systemd=true in
+.IR /etc/wsl.conf );
+then WSL2 and WSL1, told apart by
+.IR /proc/version ;
+then OpenRC, runit, sysvinit.
+.TP
+.B enable
+.RS
+.TP
+.B systemd
+.B "systemctl enable \-\-now 9share.service"
+.TP
+.B wsl2
+.B "9share wsl\-boot"
+(the [boot] command of
+.IR /etc/wsl.conf ),
+then the daemon is started at once.
+.TP
+.B openrc
+.B "rc\-update add 9share default"
+and start it, if
+.I /etc/init.d/9share
+is there.
+.TP
+.B sysv
+.B "update\-rc.d 9share defaults"
+and start it.
+.TP
+.B wsl1, runit, none
+Nothing is set up; the message says why, or how to run
+.BR "sudo 9share boot \-\-detach" .
+WSL1 has no 9p support in its kernel, so 9share cannot mount there.
+.RE
+.TP
+.B disable
+Undo it for wsl2 (the boot command is removed, and a command of the user's that was kept comes back) and openrc.  For systemd and
+sysvinit the package's own scripts stop and disable the service.
+.PP
+.B \-\-from\-package
+says that the maintainer script of the Debian package calls it after debhelper has already enabled and started the service under
+systemd and sysvinit: for those two only the message is printed.
+.SH ENVIRONMENT
+.TP
+.B NINESHARE_ROOT
+A prefix put before every path that is looked at (/proc/version, /run, /etc, /sbin).  For tests, which pretend to be each kind of machine.
+.SH SEE ALSO
+.BR 9share (8)
