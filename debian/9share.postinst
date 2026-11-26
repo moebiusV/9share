@@ -1,0 +1,26 @@
+#!/bin/sh
+set -e
+
+#DEBHELPER#
+
+case "$1" in
+configure)
+    # debhelper has done systemd and sysvinit; this does WSL2 and OpenRC, and says what cannot be done (it never fails the installation)
+    /usr/lib/9share/9share-init enable --from-package || true
+    if [ -z "${2:-}" ]; then
+        cat <<'EOT'
+
+9share is installed; nothing is shared yet.  To set up the usual case (share a
+directory of this machine with another one), run:
+
+    9share setup
+
+It asks a few questions and writes the configuration.  /etc/9share/9share.conf
+is a commented template, and 9share(8) has the rest.
+
+EOT
+    fi
+    ;;
+esac
+
+exit 0

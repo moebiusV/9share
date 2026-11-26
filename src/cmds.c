@@ -88,7 +88,7 @@ int cmd_export(int argc, char **argv)
         p9_state_dir(state, sizeof state);
         snprintf(lockp, sizeof lockp, "%s/serve.lock", state);
         if (!p9_lock_held(lockp))
-            printf("(nothing runs your exports yet: the 9share service does it at boot; now, run  sudo systemctl start 9share  or  9share serve)\n");
+            printf("(nothing runs your exports yet: the 9share service does it at boot; to start it now and at every boot, run  sudo %s/9share-init enable)\n", NINESHARE_LIBEXECDIR);
     }
     return 0;
 }
@@ -162,7 +162,7 @@ int cmd_mount(int argc, char **argv)
     p9_mkdir_p(at, 0755);
     printf("'%s' of %s will be shown at %s as soon as the exporter's tunnel is up\n", argv[1], argv[0], at);
     if (!p9_lock_held("/run/9share.lock"))
-        printf("(the daemon is not running: it starts at boot; now, run  sudo systemctl start 9share)\n");
+        printf("(the daemon is not running: to start it now and at every boot, run  sudo %s/9share-init enable)\n", NINESHARE_LIBEXECDIR);
     return 0;
 }
 
@@ -252,7 +252,7 @@ int cmd_status(void)
     struct nineshare_conf c;
     size_t i;
     int daemon = p9_lock_held("/run/9share.lock");
-    printf("daemon:  %s\n", daemon ? "running" : "not running (sudo systemctl start 9share; on WSL2: sudo 9share wsl-boot)");
+    printf("daemon:  %s\n", daemon ? "running" : "not running (sudo " NINESHARE_LIBEXECDIR "/9share-init enable)");
     p9_user_conf_path(NULL, confp, sizeof confp);
     p9_state_dir(state, sizeof state);
     nineshare_conf_init(&c);
@@ -292,14 +292,65 @@ int cmd_status(void)
     return 0;
 }
 
-/* WSL2 has no systemd: the [boot] command of /etc/wsl.conf starts the daemon.  A command that is there is kept and runs first. */
-int cmd_wsl_boot(void)
+/* wsl-boot --remove: take 9share out of the [boot] command of /etc/wsl.conf; a command of the user's that was kept comes back */
+static int wsl_boot_remove(void)
 {
-    const char *path = "/etc/wsl.conf";
+    const char *path = getenv("NINESHARE_WSL_CONF") ? getenv("NINESHARE_WSL_CONF") : "/etc/wsl.conf";
+    char *text = p9_read_file(path, NULL), *out, *line, *save = NULL, script[PB];
+    int in_boot = 0, changed = 0;
+    if (geteuid() != 0 && !getenv("NINESHARE_WSL_CONF"))
+        return fail("%s needs root: run it with sudo", "wsl-boot --remove");
+    if (!text)
+        return 0;
+    snprintf(script, sizeof script, "%s/wsl-boot", p9_sysconf_dir());
+    if (!(out = calloc(1, strlen(text) + 4 * P9_LINE)))
+        return 1;
+    for (line = strtok_r(text, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
+        char *t = line;
+        while (*t == ' ' || *t == '\t')
+            t++;
+        if (*t == '[')
+            in_boot = !strncasecmp(t, "[boot]", 6);
+        if (in_boot && !strncmp(t, "command", 7) && strchr(t, '=') && strstr(t, "9share")) {
+            if (strstr(t, script)) {                    /* the user's own command was kept in the script, on its second line */
+                char *body = p9_read_file(script, NULL), *nl, *orig;
+                if (body && (nl = strchr(body, '\n')) && (orig = nl + 1) && (nl = strchr(orig, '\n'))) {
+                    *nl = '\0';
+                    if (!strstr(orig, "9share"))
+                        sprintf(out + strlen(out), "command = \"%s\"\n", orig);
+                }
+                free(body);
+                unlink(script);
+            }
+            changed = 1;
+            continue;
+        }
+        sprintf(out + strlen(out), "%s\n", line);
+    }
+    if (changed) {
+        if (p9_write_file(path, out, strlen(out), 0644) < 0)
+            return fail("cannot write %s", path);
+        printf("%s no longer starts 9share at boot.\n", path);
+    }
+    free(text);
+    free(out);
+    return 0;
+}
+
+/* WSL2 has no systemd: the [boot] command of /etc/wsl.conf starts the daemon.  A command that is there is kept and runs first. */
+int cmd_wsl_boot(int argc, char **argv)
+{
+    const char *path = getenv("NINESHARE_WSL_CONF") ? getenv("NINESHARE_WSL_CONF") : "/etc/wsl.conf";
     char *text = p9_read_file(path, NULL), *out, *line, *save = NULL, *self, mine[P9_LINE];
     int in_boot = 0, done = 0, have_boot = 0;
     size_t cap;
-    if (geteuid() != 0)
+    if (argc == 1 && !strcmp(argv[0], "--remove"))
+        return wsl_boot_remove();
+    if (argc != 0) {
+        fprintf(stderr, "usage: 9share wsl-boot [--remove]\n");
+        return 2;
+    }
+    if (geteuid() != 0 && !getenv("NINESHARE_WSL_CONF"))
         return fail("%s needs root: run it with sudo", "wsl-boot");
     if (!text)
         text = strdup("");

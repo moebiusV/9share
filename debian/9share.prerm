@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+
+#DEBHELPER#
+
+case "$1" in
+remove|deconfigure)
+    /usr/lib/9share/9share-init disable --from-package || true
+    ;;
+esac
+
+exit 0

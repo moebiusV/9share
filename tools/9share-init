@@ -1,0 +1,112 @@
+#!/bin/sh
+# 9share-init -- find out how this machine starts services and make 9share's daemon start at boot the way that machine does it.
+#
+#   9share-init detect                  print the kind of init: systemd, wsl2, wsl1, openrc, sysv, runit or none
+#   9share-init enable [--from-package] start at boot, and start it now
+#   9share-init disable [--from-package] undo what enable did (the package's own scripts do the systemd and sysv part)
+#
+# --from-package: the Debian package's maintainer script runs this after debhelper has dealt with systemd and sysvinit, so for
+# those two only the message is printed.  Nothing here ever fails an installation: what cannot be done is said, with what to type.
+#
+# NINESHARE_ROOT puts a prefix before every path that is looked at (for the tests, which pretend to be each kind of machine).
+ROOT=${NINESHARE_ROOT:-}
+SVC=9share
+
+say() { echo "9share: $*"; }
+
+# a WSL kernel says so in /proc/version: "microsoft-standard-WSL2" for version 2, "...-Microsoft" (capital M) for version 1
+detect() {
+    if [ -d "$ROOT/run/systemd/system" ]; then
+        echo systemd                 # includes WSL2 with systemd=true in /etc/wsl.conf: systemd is then PID 1
+    elif grep -qis 'wsl2\|microsoft-standard' "$ROOT/proc/version" || [ -e "$ROOT/proc/sys/fs/binfmt_misc/WSLInterop" ]; then
+        echo wsl2
+    elif grep -qis 'microsoft' "$ROOT/proc/version"; then
+        echo wsl1
+    elif [ -d "$ROOT/run/openrc" ]; then
+        echo openrc
+    elif [ -d "$ROOT/run/runit" ]; then
+        echo runit
+    elif [ -x "$ROOT/sbin/init" ] && { [ -e "$ROOT/etc/inittab" ] || [ -d "$ROOT/run/sendsigs.omit.d" ]; }; then
+        echo sysv
+    else
+        echo none
+    fi
+}
+
+manual() {
+    say "to start it by hand: sudo 9share boot --detach   (it logs to /var/log/9share.log)"
+}
+
+enable() {
+    kind=$(detect)
+    case $kind in
+    systemd)
+        if [ -n "$from_package" ]; then
+            say "systemd: the service is enabled and started by the package"
+        elif systemctl enable --now $SVC.service; then
+            say "systemd: enabled and started ($SVC.service)"
+        else
+            say "systemd: could not enable $SVC.service"
+        fi ;;
+    wsl2)
+        # WSL2 without systemd: the [boot] command of /etc/wsl.conf runs at the next start of the WSL VM; start it now as well
+        if 9share wsl-boot; then
+            9share boot --detach && say "wsl2: started now; it starts at each boot of WSL from now on"
+        else
+            say "wsl2: could not edit /etc/wsl.conf; run: sudo 9share wsl-boot"
+            manual
+        fi ;;
+    wsl1)
+        say "WSL1 has no 9p support in its kernel, so 9share cannot mount here; use WSL2 (wsl.exe --set-version DISTRO 2)" ;;
+    openrc)
+        if [ -x "$ROOT/etc/init.d/$SVC" ] && rc-update add $SVC default >/dev/null 2>&1; then
+            rc-service $SVC start >/dev/null 2>&1 && say "openrc: added to the default runlevel and started" \
+                || say "openrc: added to the default runlevel; start it with: sudo rc-service $SVC start"
+        else
+            say "openrc: could not add the service (/etc/init.d/$SVC, rc-update)"
+            manual
+        fi ;;
+    sysv)
+        if [ -n "$from_package" ]; then
+            say "sysvinit: the service is enabled and started by the package"
+        elif update-rc.d $SVC defaults >/dev/null 2>&1; then
+            service $SVC start >/dev/null 2>&1 && say "sysvinit: enabled and started" \
+                || say "sysvinit: enabled; start it with: sudo service $SVC start"
+        else
+            say "sysvinit: could not enable the service (update-rc.d)"
+            manual
+        fi ;;
+    runit)
+        say "runit: no service was set up (a run script is yours to write: exec 9share boot)"
+        manual ;;
+    *)
+        say "no init system found (a container, or a chroot): nothing will start 9share at boot"
+        manual ;;
+    esac
+    return 0
+}
+
+disable() {
+    kind=$(detect)
+    case $kind in
+    wsl2)
+        9share wsl-boot --remove >/dev/null 2>&1 && say "wsl2: no longer started at boot" ;;
+    openrc)
+        rc-service $SVC stop >/dev/null 2>&1
+        rc-update del $SVC default >/dev/null 2>&1 && say "openrc: removed from the default runlevel" ;;
+    esac
+    return 0
+}
+
+cmd=${1:-}
+[ $# -gt 0 ] && shift
+from_package=
+for a in "$@"; do
+    case $a in --from-package) from_package=1 ;; esac
+done
+case $cmd in
+detect)  detect ;;
+enable)  enable ;;
+disable) disable ;;
+*)  echo "usage: 9share-init detect | enable [--from-package] | disable [--from-package]" >&2; exit 2 ;;
+esac

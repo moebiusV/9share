@@ -1,0 +1,119 @@
+#!/bin/sh
+# 9share-setup -- write the simple, usual configuration of 9share: share one directory of this machine with another machine
+# (`9share export`), make the secret both ends will prove (`9share pair`), and say what to type on the other machine; or, on the
+# machine that shows the files, the one mount (`sudo 9share mount`).  It asks questions when it is run by a person and does not ask
+# when it is given the answers.  See 9share-setup(1).
+
+PROG=9share
+usage() {
+    cat <<'EOT'
+usage: 9share setup                                   ask what is needed, then do it
+       9share setup --export DIR HOST [NAME] [--no-pair]    share DIR with HOST under NAME (default: the directory's name)
+       9share setup --mount USER NAME DIR                   show USER's share NAME at DIR (needs root)
+EOT
+}
+
+say() { echo "9share setup: $*"; }
+die() { echo "9share setup: $*" >&2; exit 1; }
+
+# ask QUESTION DEFAULT -> $answer
+ask() {
+    if [ -n "$2" ]; then printf '%s [%s] ' "$1" "$2"; else printf '%s ' "$1"; fi
+    read -r answer || die "no answer (to give them without being asked: 9share setup --help)"
+    [ -n "$answer" ] || answer=$2
+}
+
+yesno() { # QUESTION DEFAULT(y|n) -> 0 for yes
+    ask "$1" "$2"
+    case $answer in y|Y|yes|Yes) return 0 ;; *) return 1 ;; esac
+}
+
+do_export() { # DIR HOST NAME PAIR(1|0)
+    dir=$1 host=$2 name=$3 pair=$4
+    [ -d "$dir" ] || die "$dir is not a directory"
+    $PROG export "$dir" "$host" "$name" || die "could not write the export"
+    if [ "$pair" = 1 ]; then
+        echo
+        say "making a secret that $host and this machine will both prove (needs 9share installed on $host, and ssh to it without a password)"
+        if $PROG pair "$name" "$host"; then
+            :
+        else
+            say "the secret was not made; the share works without it (ssh is trusted).  Install 9share on $host and run later:  9share pair $name $host"
+        fi
+    fi
+    echo
+    say "done here.  Check on it with:  9share status"
+}
+
+do_mount() { # USER NAME DIR
+    if [ "$(id -u)" != 0 ]; then
+        command -v sudo >/dev/null 2>&1 || die "mounting needs root: run this as root"
+        sudo "$PROG" mount "$1" "$2" "$3" || die "could not write the mount"
+    else
+        $PROG mount "$1" "$2" "$3" || die "could not write the mount"
+    fi
+    echo
+    say "done here.  On the machine that has the files, run:  9share setup --export DIR $(hostname) $2"
+    say "and, there, to make the shared secret:  9share pair $2 $(hostname)"
+}
+
+case ${1:-} in
+-h|--help|help) usage; exit 0 ;;
+--export)
+    shift
+    pair=1; n=0
+    for a in "$@"; do
+        case $a in
+        --no-pair) pair=0 ;;
+        -*) usage >&2; exit 2 ;;
+        *) n=$((n + 1)); eval "p$n=\$a" ;;
+        esac
+    done
+    [ $n -ge 2 ] && [ $n -le 3 ] || { usage >&2; exit 2; }
+    [ -d "$p1" ] || die "$p1 is not a directory"
+    name=${p3:-$(basename "$(cd "$p1" && pwd)")}
+    do_export "$p1" "$p2" "$name" "$pair"
+    exit 0 ;;
+--mount)
+    shift
+    [ $# -eq 3 ] || { usage >&2; exit 2; }
+    do_mount "$1" "$2" "$3"
+    exit 0 ;;
+"") ;;
+*) usage >&2; exit 2 ;;
+esac
+
+# a person at a terminal
+[ -t 0 ] || { usage >&2; die "not a terminal: give the answers as arguments"; }
+echo "This sets up the usual case in three questions.  Nothing is changed until the last one is answered."
+echo
+echo "  1  this machine HAS the files and shares a directory with another machine   (the usual case)"
+echo "  2  this machine SHOWS the files of another machine"
+ask "Which is this machine?" 1
+case $answer in
+1)
+    ask "Which directory do you want to share?" "$PWD"
+    dir=$answer
+    [ -d "$dir" ] || die "$dir is not a directory"
+    ask "Which machine should see it (the name ssh knows it by, such as laptop or user@laptop.example.org)?" ""
+    host=$answer
+    [ -n "$host" ] || die "a machine is needed"
+    def=$(basename "$(cd "$dir" && pwd)")
+    ask "What should the share be called?" "$def"
+    name=$answer
+    pair=0
+    yesno "Make a shared secret as well (needs 9share installed on $host already)?" n && pair=1
+    echo
+    do_export "$dir" "$host" "$name" "$pair" ;;
+2)
+    ask "Which account on this machine does the other machine log in as?" "$(id -un)"
+    user=$answer
+    ask "What is the share called on the other machine?" ""
+    name=$answer
+    [ -n "$name" ] || die "a name is needed"
+    ask "Where should it appear on this machine?" "/mnt/$name"
+    at=$answer
+    echo
+    do_mount "$user" "$name" "$at" ;;
+*) die "answer 1 or 2" ;;
+esac

@@ -1,0 +1,45 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          9share
+# Required-Start:    $remote_fs $network $syslog
+# Required-Stop:     $remote_fs $network $syslog
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: share directories between machines over 9P, through ssh
+# Description:       The root daemon of 9share: keeps each user's exports running and each mount right.
+#                    Does nothing until something is configured (see 9share setup).
+### END INIT INFO
+# For machines that are not run by systemd (sysvinit, OpenRC).  Under systemd the unit file is used instead.
+
+DAEMON=/usr/bin/9share
+PIDFILE=/run/9share.pid
+[ -x "$DAEMON" ] || exit 0
+
+case "$1" in
+start)
+    echo "Starting 9share"
+    start-stop-daemon --start --quiet --background --make-pidfile --pidfile "$PIDFILE" --exec "$DAEMON" -- boot
+    ;;
+stop)
+    echo "Stopping 9share"
+    start-stop-daemon --stop --quiet --retry TERM/30/KILL/5 --pidfile "$PIDFILE"
+    rm -f "$PIDFILE"
+    ;;
+restart|force-reload)
+    "$0" stop
+    "$0" start
+    ;;
+status)
+    if start-stop-daemon --status --pidfile "$PIDFILE"; then
+        echo "9share is running"
+    else
+        echo "9share is not running"
+        exit 3
+    fi
+    ;;
+*)
+    echo "Usage: $0 {start|stop|restart|force-reload|status}" >&2
+    exit 2
+    ;;
+esac
+exit 0

@@ -13,6 +13,9 @@
 #ifndef NINESHARE_SYSCONFDIR
 #define NINESHARE_SYSCONFDIR "/etc"
 #endif
+#ifndef NINESHARE_LIBEXECDIR
+#define NINESHARE_LIBEXECDIR "/usr/lib/9share"
+#endif
 #ifndef NINESHARE_DAUD
 #define NINESHARE_DAUD "/usr/sbin/daud"
 #endif

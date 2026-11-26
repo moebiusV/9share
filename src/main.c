@@ -1,12 +1,18 @@
 /* main.c -- 9share: share directories between machines over 9P, through ssh.  See 9share(8). */
 #include "cmds.h"
 #include "9share.h"
+#include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 static void usage(FILE *f)
 {
     fputs("9share " NINESHARE_VERSION ": share directories between machines over 9P, through ssh\n"
+          "\n"
+          "  first time:\n"
+          "    9share setup                     a few questions, then the simple, usual configuration\n"
           "\n"
           "  the machine that has the files (as yourself, no sudo):\n"
           "    9share export DIR HOST [NAME]    share DIR with HOST under NAME (default: the directory's name)\n"
@@ -20,7 +26,7 @@ static void usage(FILE *f)
           "\n"
           "  either:\n"
           "    9share status                    what is shared, what is mounted, what is running\n"
-          "    sudo 9share wsl-boot             start 9share at boot on WSL2 (no systemd there)\n"
+          "    sudo 9share wsl-boot [--remove]  start 9share at boot on WSL2 (no systemd there)\n"
           "\n"
           "  behind these: `9share boot [--detach]` (the root daemon, run by the 9share service) and\n"
           "  `9share serve` (one user's exports, in the foreground).  See 9share(8).\n", f);
@@ -42,9 +48,19 @@ int main(int argc, char **argv)
     if (!strcmp(c, "mount")) return cmd_mount(argc, argv);
     if (!strcmp(c, "unmount")) return cmd_unmount(argc, argv);
     if (!strcmp(c, "rw") || !strcmp(c, "ro") || !strcmp(c, "off")) return cmd_mode(c, argc, argv);
+    if (!strcmp(c, "setup")) {                        /* the questions are a shell script's: it runs 9share's other commands */
+        char **av = calloc((size_t)argc + 2, sizeof *av);
+        int i;
+        if (!av) return 1;
+        av[0] = "9share-setup";
+        for (i = 0; i < argc; i++) av[i + 1] = argv[i];
+        execvp(av[0], av);
+        fprintf(stderr, "9share: cannot run 9share-setup: %s\n", strerror(errno));
+        return 1;
+    }
     if (!strcmp(c, "pair")) return cmd_pair(argc, argv);
     if (!strcmp(c, "status")) return cmd_status();
-    if (!strcmp(c, "wsl-boot")) return cmd_wsl_boot();
+    if (!strcmp(c, "wsl-boot")) return cmd_wsl_boot(argc, argv);
     if (!strcmp(c, "serve")) return p9_serve();
     if (!strcmp(c, "relay")) return p9_relay(argc, argv);
     if (!strcmp(c, "link")) return p9_link(argc, argv);
