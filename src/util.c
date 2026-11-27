@@ -4,6 +4,7 @@
 #include <ctype.h>
 #include <dirent.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -391,6 +392,69 @@ int p9_mount_options(char *opts, size_t n)
     }
     free(l);
     return rc;
+}
+
+static int dir_trust(const char *file, unsigned owner, char *why, size_t wn)
+{
+    char dir[P9_LINE + 32], *slash;
+    struct stat st;
+    snprintf(dir, sizeof dir, "%s", file);
+    if (!(slash = strrchr(dir, '/')))
+        snprintf(dir, sizeof dir, ".");
+    else if (slash == dir)
+        slash[1] = '\0';
+    else
+        *slash = '\0';
+    if (stat(dir, &st) < 0) {
+        snprintf(why, wn, "cannot look at the directory %s: %s", dir, strerror(errno));
+        return -1;
+    }
+    if (st.st_uid != owner && st.st_uid != 0) {
+        snprintf(why, wn, "the directory %s is owned by user %u: it must be owned by %s", dir, (unsigned)st.st_uid, owner ? "its user or root" : "root");
+        return -1;
+    }
+    if (st.st_mode & (S_IWGRP | S_IWOTH)) {
+        snprintf(why, wn, "the directory %s is writable by group or others (chmod go-w %s)", dir, dir);
+        return -1;
+    }
+    return 0;
+}
+
+int p9_conf_trust(const char *path, unsigned owner, char *why, size_t wn)
+{
+    char real[PATH_MAX];
+    struct stat st;
+    why[0] = '\0';
+    if (stat(path, &st) < 0) {
+        if (errno == ENOENT)
+            return 1;
+        snprintf(why, wn, "cannot look at %s: %s", path, strerror(errno));
+        return -1;
+    }
+    if (!realpath(path, real))
+        snprintf(real, sizeof real, "%s", path);
+    if (!S_ISREG(st.st_mode)) {
+        snprintf(why, wn, "%s is not a regular file", real);
+        return -1;
+    }
+    if (st.st_uid != owner && st.st_uid != 0) {
+        snprintf(why, wn, "%s is owned by user %u: it must be owned by %s", real, (unsigned)st.st_uid, owner ? "its user or root" : "root");
+        return -1;
+    }
+    if (st.st_mode & (S_IWGRP | S_IWOTH)) {
+        snprintf(why, wn, "%s is writable by group or others (chmod go-w %s)", real, real);
+        return -1;
+    }
+    if (dir_trust(path, owner, why, wn) < 0)
+        return -1;
+    if (strcmp(real, path) != 0 && dir_trust(real, owner, why, wn) < 0)     /* through a link: the directory of the link is as good as the file's */
+        return -1;
+    return 0;
+}
+
+void p9_kernel_mount_opts(char *buf, size_t n, int kfd, const char *uname, const char *aname, unsigned msize, unsigned access_uid)
+{
+    snprintf(buf, n, "trans=fd,rfdno=%d,wfdno=%d,version=9p2000.L,uname=%s,access=%u,aname=%s,msize=%u", kfd, kfd, uname, access_uid, aname, msize);
 }
 
 int p9_prefetch_kb(int *kb)

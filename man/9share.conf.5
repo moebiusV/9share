@@ -82,6 +82,31 @@ The package installs
 as a template of comments with no blocks: nothing is shared and nothing is mounted until a block is added.
 .B 9share setup
 writes the usual blocks after a few questions.
+.SH PERMISSIONS
+A configuration file says what is shared and who may use it, so a file that someone else could have changed is not acted on.  A file is used
+only if all of these hold:
+.IP \(bu 3
+it is a regular file (a symbolic link is followed, and what it points to is what is checked);
+.IP \(bu 3
+it is owned by the account that uses it (\fI~/.config/9share/9share.conf\fR) or by root; the system file
+\fI/etc/9share/9share.conf\fR must be owned by root;
+.IP \(bu 3
+it is not writable by group or others (\fBchmod go\-w\fR); being readable by others is fine, it holds no secret (the secrets are in the
+.I NAME.secret
+files, which must be readable by their owner alone);
+.IP \(bu 3
+its directory is owned by the same account or by root and is not writable by group or others, or the file could be replaced.
+.PP
+A file that is refused is treated as if it had no blocks, and the reason is logged: the daemon mounts nothing from the system file, and takes down
+what it had mounted from it; the exporter shares nothing from the user's file, and stops what it was sharing.  The commands that edit a file
+.RB ( "9share export" ,
+.BR unexport ,
+.BR mount ,
+.BR unmount )
+refuse as well, and change nothing, so that a change is not made to a file that is then ignored.
+.B "9share status"
+warns about a file that is not used.  The files are looked at again every second or so: when the permissions are put right the file is used again,
+with no restart.
 .SH FILES
 The secret that makes a share's link prove itself with SCRAM-SHA-256 is not in the configuration: it is the file
 .I ~/.config/9share/NAME.secret

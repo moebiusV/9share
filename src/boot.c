@@ -207,11 +207,16 @@ static void relay_end(struct mstate *ms, const struct nineshare_mount *m)
 static void mounter_start(struct mstate *ms, const struct nineshare_mount *m, const char *uname, const char *aname, int ro)
 {
     char opts[3 * P9_LINE], extra[256];
+    struct passwd *pw;
     if (ms->mounter > 0 || ms->kfd < 0)
         return;
+    if (!(pw = getpwnam(m->user))) {
+        p9_log("%s: there is no account '%s' on this machine: not mounted", m->name, m->user);
+        return;
+    }
     p9_mkdir_p(m->at, 0755);
-    snprintf(opts, sizeof opts, "trans=fd,rfdno=%d,wfdno=%d,version=9p2000.L,uname=%s,access=any,aname=%s,msize=%d",
-             ms->kfd, ms->kfd, uname, aname, NINESHARE_MSIZE);
+    /* access=UID: only this account may use the mount; the kernel refuses every other local user (and root: nothing here needs root to open the files) */
+    p9_kernel_mount_opts(opts, sizeof opts, ms->kfd, uname, aname, NINESHARE_MSIZE, (unsigned)pw->pw_uid);
     if (p9_mount_options(extra, sizeof extra) < 0)
         syslog(LOG_WARNING, "%s/mount-options is not usable (see 9share(8)): ignored", p9_sysconf_dir());
     if (extra[0])
@@ -428,8 +433,18 @@ int p9_boot(int detach)
 
         /* the mounts */
         nineshare_conf_init(&c);
-        if (p9_file_exists(confp))
-            nineshare_conf_parse(confp, &c);
+        {   /* a file that others could have changed says nothing: no mounts, and what was mounted is taken down (the reason is logged once) */
+            static char lastwhy[P9_LINE + 256];
+            char why[P9_LINE + 256];
+            int tr = p9_conf_trust(confp, 0, why, sizeof why);
+            if (tr == 0)
+                nineshare_conf_parse(confp, &c);
+            if (tr < 0 && strcmp(why, lastwhy) != 0)
+                p9_log("%s is not used: %s", confp, why);
+            if (tr >= 0 && lastwhy[0])
+                p9_log("%s is used again", confp);
+            snprintf(lastwhy, sizeof lastwhy, "%s", tr < 0 ? why : "");
+        }
         for (j = 0; j < c.nmounts; j++) {
             struct mstate *ms = state_of(mst, c.mounts[j].name);
             if (ms)

@@ -44,6 +44,7 @@ typedef struct px px_t;
 px_t *px_new(const struct px_conf *c);
 void  px_free(px_t *x);
 void  px_reset(px_t *x);                              /* a new session: forget the fids, the tags and everything read ahead */
+void  px_set_window(px_t *x, size_t window_bytes);    /* change how far ahead to read, at any time; 0 stops and drops what was read ahead */
 void  px_tick(px_t *x, time_t now);                   /* the time, now and then (drops what has waited too long) */
 
 int   px_from_kernel(px_t *x, const uint8_t *p, size_t n);    /* 0, or -1: the stream is broken */

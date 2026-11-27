@@ -162,7 +162,7 @@ int p9_serve(void)
     struct runner *run = NULL;
     size_t nrun = 0, i, j;
     struct stat last;
-    int lk, have_last = 0;
+    int lk, have_last = 0, last_trust = 2;             /* 2: nothing seen yet */
     struct sigaction sa;
 
     p9_state_dir(state, sizeof state);
@@ -180,12 +180,19 @@ int p9_serve(void)
 
     while (!stopping) {
         struct stat st;
-        int changed = stat(confp, &st) == 0 ? (!have_last || st.st_mtime != last.st_mtime || st.st_size != last.st_size) : have_last;
+        char why[P9_LINE + 256];
+        int tr = p9_conf_trust(confp, (unsigned)getuid(), why, sizeof why);       /* looked at on every pass: a chmod changes neither mtime nor size */
+        int changed = (stat(confp, &st) == 0 ? (!have_last || st.st_mtime != last.st_mtime || st.st_size != last.st_size) : have_last) || tr != last_trust;
         if (changed) {
             struct nineshare_conf c;
             nineshare_conf_init(&c);
             have_last = stat(confp, &last) == 0;
-            if (have_last)
+            if (tr < 0)
+                fprintf(stderr, "9share: %s is not used: %s\n", confp, why);
+            else if (last_trust < 0 && tr >= 0)
+                fprintf(stderr, "9share: %s is used again\n", confp);
+            last_trust = tr;
+            if (have_last && tr == 0)
                 nineshare_conf_parse(confp, &c);
             for (i = 0; i < nrun; ) {           /* stop what is gone or changed */
                 for (j = 0; j < c.nexports && !same(&run[i], &c.exports[j]); j++)

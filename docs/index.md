@@ -81,7 +81,7 @@ Requirements: Linux with the 9p module, openssh-client, and key-based ssh from t
 
 ### Security
 
-The export is the directory you name, with your rights. The mount is `nosuid,nodev`, and any local user on the receiving machine who can reach the mount point sees the files as you: do not export a directory to a machine whose users you do not trust. The relay takes a connection only from a process of the mount's user and, once you have run `9share pair`, only one that proves the shared secret (SCRAM-SHA-256). The secret does not encrypt anything; ssh does. Every value that travels from the exporter into a mount option is checked first.
+The export is the directory you name, served with your rights: export only what the account that mounts it may see. The mount is `nosuid,nodev`, and only the account named in `9share mount` can use it: the kernel refuses every other user of the receiving machine, root included (anyone who can become that account can, of course). The relay takes a connection only from a process of that account and, once you have run `9share pair`, only one that proves the shared secret (SCRAM-SHA-256), so nothing can pose as the exporter without it. The secret does not encrypt anything; ssh does. The configuration files are used only if no one but their owner (or root) could have changed them (not writable by group or others, in a directory likewise): a file that is too open is refused, and so are the commands that would edit it.
 
 ## Documentation
 

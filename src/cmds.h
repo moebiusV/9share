@@ -11,4 +11,5 @@ int cmd_status(void);
 int cmd_wsl_boot(int argc, char **argv);
 int cmd_shutdown(int argc, char **argv);
 int cmd_restart(int argc, char **argv);
+int cmd_readahead(int argc, char **argv);
 #endif

@@ -1,3 +1,19 @@
+9share (0.1.0-10) unstable; urgency=medium
+
+  * Only the account named in `9share mount` can use a mount: the kernel mount is made with access=UID, that account's uid (it was access=any: every local
+    user of the receiving machine could use the files with the exporting user's rights).  diod's own manual calls this its single-user mode.
+  * A configuration file that someone else could have changed is not acted on: it must be a regular file owned by its user (the system file: by root),
+    not writable by group or others, in a directory likewise.  The daemon then mounts nothing from the system file (and takes down what it had mounted),
+    serve shares nothing from the user's file, the commands that edit a file refuse and change nothing, and `9share status` warns.  A chmod is noticed
+    at once.  Tests: test_conf.c (every rule), test_serve.sh, test_confperm.sh.
+  * `9share readahead [off|on|KB]` and a relay that looks at /etc/9share/prefetch-kb about once a second: read-ahead is switched on and off, or resized,
+    on a mount that is in use, with no restart (the proxy follows the open files whether or not it reads ahead).
+  * daud is brought up to diod master (164 commits since the v1.1.0 it began from; among them upstream's own fix of the shutdown hang, 16716c3).  The pages
+    and unit of diod's other programs are kept in the tree, not built or installed; daud(8) no longer describes a config file and a mount helper this
+    build does not have, and the usage text says daud.
+
+ -- David Walther <david@clearbrookdistillery.com>  Fri, 27 Nov 2026 08:00:00 -0700
+
 9share (0.1.0-9) unstable; urgency=medium
 
   * daud no longer hangs on SIGTERM when connections end at the same moment (about one run in twelve of the old shutdown test): the cleanup of a

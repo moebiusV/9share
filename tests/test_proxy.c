@@ -407,6 +407,37 @@ int main(void)
         px_free(x);
     }
 
+    /* ---- read-ahead switched on while a file is open, and off again ---- */
+    {
+        struct px_conf off = conf(0);
+        x = fresh(&off, 10, 0);
+        read_seq(x, 10, 0, 6, 100);
+        px_stats(x, &st); CHECK(st.issued == 0);                        /* off: nothing is read ahead, however long the file is read in order */
+        px_set_window(x, PX_DEFAULT_WINDOW);
+        read_seq(x, 10, 6, 4, 100);                                     /* on: the file that is already open is read ahead after a few more reads */
+        px_stats(x, &st); CHECK(st.issued > 0);
+        kern_pull(x);
+        CHECK(kern_read_ok(109, 9ull * COUNT, COUNT));
+        px_free(x);
+
+        x = fresh(&c, 10, 0);
+        read_seq_hold(x, 10, 3, 100);                                   /* blocks 3 and 4 are asked for and not answered */
+        srv_pull(x);
+        kern_clear(x);
+        k_read(x, 700, 10, 3ull * COUNT, COUNT);                        /* a read that waits for block 3 */
+        kern_pull(x);
+        CHECK(!kern_find(700, Rread));
+        px_set_window(x, 0);                                            /* off, now */
+        px_stats(x, &st); CHECK(st.ahead == 0 && st.held == 0);
+        srv_pull(x);
+        CHECK(srv_find_read(3ull * COUNT) != NULL);                     /* the read that waited went to the server: it is not lost */
+        srv_answer_all(x); kern_pull(x);
+        CHECK(kern_read_ok(700, 3ull * COUNT, COUNT));
+        read_seq(x, 10, 4, 6, 800);
+        px_stats(x, &st); { unsigned long i0 = st.issued; read_seq(x, 10, 10, 6, 800); px_stats(x, &st); CHECK(st.issued == i0); }   /* and nothing more is asked for */
+        px_free(x);
+    }
+
     /* ---- a flush of a read that is waiting for a read-ahead answers the flush and sends nothing ---- */
     x = fresh(&c, 10, 0);
     read_seq_hold(x, 10, 3, 100);

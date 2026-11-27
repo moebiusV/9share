@@ -55,6 +55,43 @@ static void say(int ctl, const char *fmt, ...)
     if (write(ctl, buf, (size_t)n) < 0) { /* the daemon is gone: we are about to be told so by the signal */ }
 }
 
+/* The setting of read-ahead (/etc/9share/prefetch-kb) may change while the mount is in use: look at the file about once a second and apply what is there.
+ * Called with PX NULL once at the start, to take note of what the file is. */
+static void watch_prefetch(px_t *px, int *pkb, int ctl)
+{
+    static struct stat last;
+    static int have_last, started;
+    static time_t checked;
+    char path[P9_LINE + 32];
+    struct stat st;
+    int have, kb, rc;
+    time_t now = time(NULL);
+    if (started && now == checked)
+        return;
+    checked = now;
+    snprintf(path, sizeof path, "%s/prefetch-kb", p9_sysconf_dir());
+    have = stat(path, &st) == 0;
+    if (started && have == have_last && (!have || (st.st_mtime == last.st_mtime && st.st_size == last.st_size && st.st_ino == last.st_ino)))
+        return;
+    have_last = have;
+    if (have)
+        last = st;
+    if (!started) {
+        started = 1;
+        return;
+    }
+    rc = p9_prefetch_kb(&kb);
+    if (rc < 0) {
+        say(ctl, "LOG %s is not usable: read-ahead stays at %d KB", path, *pkb);
+        return;
+    }
+    if (kb != *pkb) {
+        *pkb = kb;
+        px_set_window(px, (size_t)kb * 1024);
+        say(ctl, "LOG read-ahead now %d KB", kb);
+    }
+}
+
 int p9_relay(int argc, char **argv)
 {
     struct sockaddr_un a;
@@ -101,12 +138,13 @@ int p9_relay(int argc, char **argv)
         return 1;
     if (p9_prefetch_kb(&pkb) < 0)
         say(ctl, "LOG %s/prefetch-kb is not usable: %d KB is used", p9_sysconf_dir(), pkb);
-    if (pkb > 0) {
+    {   /* the proxy is always there, even at 0 KB, so that read-ahead can be switched on and off while files are open */
         struct px_conf pc = { (size_t)pkb * 1024, PX_DEFAULT_REQUESTS, PX_DEFAULT_TOTAL, PX_DEFAULT_TTL };
         if (!(px = px_new(&pc)))
-            say(ctl, "LOG out of memory for reading ahead: reading without");
+            say(ctl, "LOG out of memory for the proxy: the bytes are carried without looking at them, and nothing is read ahead");
     }
-    say(ctl, "LOG %s", px ? "reading ahead (prefetch-kb)" : "not reading ahead");
+    say(ctl, "LOG %s", !px ? "not reading ahead" : pkb ? "reading ahead (prefetch-kb)" : "not reading ahead (prefetch-kb is 0)");
+    watch_prefetch(NULL, NULL, 0);                      /* what the file is now: later changes are noticed against it */
 
     while (!stopping && !why) {
         struct pollfd p[3];
@@ -117,6 +155,7 @@ int p9_relay(int argc, char **argv)
         if (px) {
             struct px_buf *tk = px_to_kernel(px), *ts = px_to_server(px);
             px_tick(px, time(NULL));
+            watch_prefetch(px, &pkb, ctl);
             /* what the link has for the kernel goes through the proxy, which may answer some of the kernel's reads by itself */
             while (lk_avail(lk) > 0 && px_buf_avail(tk) < PXQ_KERNEL) {
                 uint8_t tmp[65536];

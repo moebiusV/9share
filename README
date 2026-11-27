@@ -64,12 +64,15 @@ Requirements: Linux with the 9p module (Debian, Ubuntu, WSL2 and others), openss
 and key-based ssh from the machine with the files to the one that shows them.
 To build from source: a C compiler, autoconf, automake and autoconf-archive.
 
-Security: the export is the directory you name, with your rights, and the mount is
-nosuid,nodev.  Any local user on the receiving machine who can reach the mount point sees
-the files as you: do not export a directory to a machine whose users you do not trust.
-The relay takes a connection only from a process of the mount's user, and, once you have run
-9share pair, only one that proves the shared secret (SCRAM-SHA-256).  The secret does not
-encrypt anything; ssh does.
+Security: the export is the directory you name, served with your rights; export only what the
+account that mounts it may see.  The mount is nosuid,nodev, and only the account named in
+`9share mount` can use it: the kernel refuses every other user of the receiving machine, root
+included (anyone who can become that account can, of course).  The relay takes a connection only
+from a process of that account and, once you have run 9share pair, only one that proves the shared
+secret (SCRAM-SHA-256), so nothing can pose as the exporter without the secret.  The secret does not
+encrypt anything; ssh does.  The configuration files are used only if no one but their owner (or root) could
+have changed them (not writable by group or others, in a directory likewise); a file that is too open is
+refused, and so are the commands that would edit it.
 
 See INSTALL, HACKING, 9share(8), 9share-setup(1), 9share.conf(5), daud(8).
 License: GPL-2.0-or-later for 9share; daud is diod's licence (GPL-2, with libnpfs MIT-like), see COPYING and daud/COPYING.

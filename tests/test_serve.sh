@@ -84,6 +84,18 @@ sleep 3
 check "a block with a mistake is not started" '! pgrep -f -- "third.example.org" >/dev/null'
 check "and the mistake is reported with its place" 'grep -q "9share.conf:[0-9]*: " "$T/serve.log"'
 
+# a configuration that others could change is not acted on: relaxed permissions stop the exports, and making them safe again starts them again
+CONF=$HOME/.config/9share/9share.conf
+chmod g+w "$CONF"
+check "a config that the group can write stops the exports" 'waitfor "! pgrep -f -- \"other.example.org 9share link one\" >/dev/null"'
+check "and the log says why" 'waitfor "grep -q \"writable by group or others\" \"$T/serve.log\""'
+chmod g-w "$CONF"
+check "making it safe again starts the exports again" 'waitfor "pgrep -f -- \"other.example.org 9share link one\" >/dev/null"'
+chmod o+w "$HOME/.config/9share"
+check "a directory that others can write stops them too" 'waitfor "! pgrep -f -- \"other.example.org 9share link one\" >/dev/null"'
+chmod o-w "$HOME/.config/9share"
+check "and fixing the directory starts them again" 'waitfor "pgrep -f -- \"other.example.org 9share link one\" >/dev/null"'
+
 kill -TERM $SERVE; wait $SERVE 2>/dev/null
 # Only this test's own processes: its hosts are *.example.org and its stand-in for ssh sleeps 601.37 s.  (Matching any "--dial ... 9share link" or
 # "sleep 600" made the test fail on a machine that was really exporting a directory.)

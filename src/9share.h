@@ -47,6 +47,14 @@ int   p9_daemon_pid(void);                        /* the pid of the running `9sh
  * KB gets it, and -1 is returned when the file was refused (the default is used). */
 int   p9_mount_options(char *opts, size_t n);
 int   p9_prefetch_kb(int *kb);
+/* May a configuration file be acted on?  A file says what is shared and who may use it, so it is trusted only if it could not have been changed by anyone
+ * else: a regular file (a symbolic link is followed, and what it points at is what is checked), owned by OWNER or by root, not writable by group or others,
+ * in a directory that is owned by OWNER or root and not writable by group or others.  Returns 0 (usable), 1 (there is no such file) or -1 (refused: WHY
+ * says in one line what is wrong and what to do). */
+int   p9_conf_trust(const char *path, unsigned owner, char *why, size_t wn);
+/* The options of the kernel's 9p mount.  ACCESS_UID is the account on THIS machine that may use the mount: access=UID makes the kernel refuse every other
+ * user, root included (diod's own manual calls this its single-user mode; access=any lets every local user in, with the exporting user's rights). */
+void  p9_kernel_mount_opts(char *buf, size_t n, int kfd, const char *uname, const char *aname, unsigned msize, unsigned access_uid);
 /* Run argv; its standard output (up to outsz-1 bytes) goes to OUT if given.  Returns the exit status,
  * 124 after TIMEOUT seconds (the child is killed), -1 if it cannot be run. */
 int   p9_run(char *const argv[], int timeout, char *out, size_t outsz);

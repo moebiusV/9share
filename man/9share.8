@@ -35,6 +35,9 @@
 .br
 .B sudo 9share restart
 .br
+.B sudo 9share readahead
+.RB [ off | on | \fIKB\fR ]
+.br
 .B 9share boot
 .RB [ \-\-detach ]
 .br
@@ -111,6 +114,15 @@ Under systemd it stops the 9share service (a signalled process would be started 
 is a shutdown followed by a start, or
 .B systemctl restart
 under systemd.
+.B sudo 9share readahead
+.RB [ off | on | \fIKB\fR ]
+sets how far ahead the relays read, in kilobytes
+.RB ( off
+is 0,
+.B on
+is the default, 2048), and says what is set; without an argument it only says.
+Mounts that are in use take it up within a second or two, with no restart: turning it off drops what was read ahead, and turning it on starts with
+the next reads in order.
 The daemon keeps its process number in
 .IR /run/9share.pid ;
 a number in that file is used only if that process really is
@@ -275,12 +287,14 @@ and
 do and undo it.  See
 .BR 9share\-init (8).
 .SH SECURITY
-Mounts are made nosuid,nodev, with access=any: any user on the receiving machine who can reach the mount point sees the files with
-the exporting user's rights.  The receiving machine mounts only over a connection that the relay of the mount's user accepted, which
-is a process of that user; with a secret (see
+Mounts are made nosuid,nodev, with access=UID, UID being the account named in the mount block: the kernel refuses every other user of the
+receiving machine, root included, so only that account (and whoever can become it) can use the files.  They are served with the exporting
+user's rights: export only what that account may see.  The configuration files are used only if no one but their owner (or root) could have changed them: see
+.BR 9share.conf (5).
+The receiving machine mounts only over a connection that the relay of the mount's user
+accepted, which is a process of that user; with a secret (see
 .BR pair )
-only one that proved the secret as well.  Every value that goes from the exporter into a mount option is checked first.  Do not
-export a directory to a machine whose users you do not trust.
+only one that proved the secret as well.  Every value that goes from the exporter into a mount option is checked first.
 .PP
 The secret protects the link against another process that can reach the relay's socket, or an ssh login that is not the exporter's.
 It does not make the 9P traffic secret: that is ssh's work.
@@ -323,9 +337,9 @@ The log of the daud of an export.
 Optional, on the machine that shows the files: one number, how far ahead the relay reads for a file that is read in order, in kilobytes (default 2048,
 0 = not at all).  See
 .BR "READING AHEAD" .
-Read when the mount is made: use
-.B "9share restart"
-to apply a change.
+The relays look at it about once a second, so a change takes effect on a mount that is in use, with no restart (
+.B "9share readahead"
+writes it).
 .TP
 .I /etc/9share/mount\-options
 Optional, on the machine that shows the files: one line of extra options for the kernel's 9p mount.  Letters, digits and

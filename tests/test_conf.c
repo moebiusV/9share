@@ -1,7 +1,9 @@
 /* test_conf.c -- the parser of 9share.conf, its checks, and the editing of the file's text. */
 #include "../src/9share.h"
 #include "test.h"
+#include <errno.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -157,6 +159,55 @@ int main(void)
         put("prefetch-kb", "99999999\n", path);
         CHECK(p9_prefetch_kb(&kb) < 0 && kb == 2048);
         unsetenv("NINESHARE_SYSCONFDIR");
+    }
+
+    /* may a configuration file be acted on?  Every rule, with files of our own (we are not root, and so are the owners) */
+    {
+        char why[512], f[600], d2[600], lnk[600], cmd[900];
+        unsigned me = (unsigned)getuid();
+        snprintf(f, sizeof f, "%s/trust.conf", dir);
+        CHECK(p9_conf_trust(f, me, why, sizeof why) == 1);                                    /* no file: nothing to act on */
+        put("trust.conf", "# nothing\n", path);
+        CHECK(chmod(dir, 0755) == 0 && chmod(f, 0644) == 0);
+        CHECK(p9_conf_trust(f, me, why, sizeof why) == 0);                                    /* the owner's, others may read it */
+        CHECK(chmod(f, 0600) == 0 && p9_conf_trust(f, me, why, sizeof why) == 0);
+        CHECK(chmod(f, 0664) == 0 && p9_conf_trust(f, me, why, sizeof why) < 0 && strstr(why, "writable by group or others"));
+        CHECK(chmod(f, 0646) == 0 && p9_conf_trust(f, me, why, sizeof why) < 0);
+        CHECK(chmod(f, 0666) == 0 && p9_conf_trust(f, me, why, sizeof why) < 0 && strstr(why, "chmod go-w"));
+        CHECK(chmod(f, 0644) == 0 && chmod(dir, 0775) == 0 && p9_conf_trust(f, me, why, sizeof why) < 0 && strstr(why, "directory"));   /* it could be replaced */
+        CHECK(chmod(dir, 0757) == 0 && p9_conf_trust(f, me, why, sizeof why) < 0);
+        CHECK(chmod(dir, 0755) == 0 && p9_conf_trust(f, me, why, sizeof why) == 0);
+        if (getuid() != 0) {
+            CHECK(p9_conf_trust(f, 0, why, sizeof why) < 0 && strstr(why, "must be owned by root"));       /* the system file is root's alone */
+            CHECK(p9_conf_trust(f, me + 1, why, sizeof why) < 0 && strstr(why, "must be owned by its user or root"));
+        }
+        snprintf(d2, sizeof d2, "%s/sub", dir);
+        CHECK(mkdir(d2, 0755) == 0 || errno == EEXIST);
+        CHECK(p9_conf_trust(d2, me, why, sizeof why) < 0 && strstr(why, "not a regular file"));
+        snprintf(lnk, sizeof lnk, "%s/link.conf", dir);
+        unlink(lnk);
+        CHECK(symlink(f, lnk) == 0 && p9_conf_trust(lnk, me, why, sizeof why) == 0);          /* a link to a good file in a good directory */
+        CHECK(chmod(f, 0666) == 0 && p9_conf_trust(lnk, me, why, sizeof why) < 0);            /* what it points at is what counts */
+        CHECK(chmod(f, 0644) == 0);
+        snprintf(cmd, sizeof cmd, "%s/elsewhere", dir);
+        CHECK(mkdir(cmd, 0777) == 0 || errno == EEXIST);
+        CHECK(chmod(cmd, 0777) == 0);
+        snprintf(cmd, sizeof cmd, "%s/elsewhere/real.conf", dir);
+        { FILE *x = fopen(cmd, "w"); if (x) { fputs("# x\n", x); fclose(x); } }
+        CHECK(chmod(cmd, 0644) == 0);
+        unlink(lnk);
+        CHECK(symlink(cmd, lnk) == 0 && p9_conf_trust(lnk, me, why, sizeof why) < 0 && strstr(why, "directory"));   /* a good file in a directory that others can write */
+        unlink(lnk);
+    }
+
+    /* the options of the kernel mount: only the named local account may use it */
+    {
+        char o[512];
+        p9_kernel_mount_opts(o, sizeof o, 7, "exporter", "/srv/share", 131072, 1234);
+        CHECK(strstr(o, "access=1234,") != NULL);
+        CHECK(strstr(o, "access=any") == NULL && strstr(o, "access=client") == NULL && strstr(o, "access=user") == NULL);
+        CHECK(strstr(o, "trans=fd,rfdno=7,wfdno=7,version=9p2000.L,uname=exporter,") == o);
+        CHECK(strstr(o, ",aname=/srv/share,msize=131072") != NULL);
     }
 
     DONE();

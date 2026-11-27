@@ -16,7 +16,7 @@
 #include <sys/wait.h>
 #include <time.h>
 
-static char dir[96], home[128], share[160], pidfile[160], dlog[160];
+static char dir[96], home[128], etc[128], share[160], pidfile[160], dlog[160];
 static const char *bin, *daud;
 static char secretf[400];                          /* set when NINESHARE_TEST_SECRET asks for SCRAM on this run */
 
@@ -34,6 +34,7 @@ static pid_t start_relay(int kr, int ctl_w)
         snprintf(k, sizeof k, "%d", kr);
         snprintf(c, sizeof c, "%d", ctl_w);
         setenv("HOME", home, 1);
+        setenv("NINESHARE_SYSCONFDIR", etc, 1);                 /* where the relay finds prefetch-kb */
         execl(bin, "9share", "relay", "t", "40", k, c, (char *)NULL);
         _exit(127);
     }
@@ -137,7 +138,8 @@ int main(void)
     snprintf(share, sizeof share, "%s/share", dir);
     snprintf(pidfile, sizeof pidfile, "%s/carriers", dir);
     snprintf(dlog, sizeof dlog, "%s/daud.log", dir);
-    mkdir(dir, 0700); mkdir(home, 0700); mkdir(share, 0700);
+    snprintf(etc, sizeof etc, "%s/etc", dir);
+    mkdir(dir, 0700); mkdir(home, 0700); mkdir(share, 0700); mkdir(etc, 0700);
     if (getenv("NINESHARE_TEST_SECRET")) {          /* both ends read the same secret: daud from this file, the relay from HOME */
         char d[300];
         FILE *sf;
@@ -187,6 +189,19 @@ int main(void)
     CHECK(bad == 0);
     CHECK(cuts >= 10);
     CHECK(pidcount() > cuts);                                    /* daud started a carrier again after each cut */
+
+    {   /* read-ahead is switched off and on while the mount is in use: the relay notices the file, with no restart and no remount */
+        char p[300];
+        FILE *pf;
+        snprintf(p, sizeof p, "%s/prefetch-kb", etc);
+        if ((pf = fopen(p, "w"))) { fputs("0\n", pf); fclose(pf); }
+        CHECK(wait_line(ctl[0], "read-ahead now 0 KB", 6));
+        if ((pf = fopen(p, "w"))) { fputs("2048\n", pf); fclose(pf); }
+        CHECK(wait_line(ctl[0], "read-ahead now 2048 KB", 6));
+        if ((pf = fopen(p, "w"))) { fputs("garbage\n", pf); fclose(pf); }
+        CHECK(wait_line(ctl[0], "is not usable: read-ahead stays at 2048 KB", 6));      /* a broken file changes nothing */
+        if ((pf = fopen(p, "w"))) { fputs("2048\n", pf); fclose(pf); }
+    }
 
     /* write a big file, cutting as it goes */
     q.n = 0; put32(&q, 1); put32(&q, 3); put16(&q, 0);

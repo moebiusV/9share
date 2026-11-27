@@ -40,6 +40,17 @@ static void ssh_user(const char *host, char *out, size_t n)
         }
 }
 
+/* A configuration that the daemon (or serve) would not use, because someone else could have changed it, is not edited either: the change would be made
+ * to a file that is ignored.  See p9_conf_trust. */
+static int conf_refused(const char *path, unsigned owner)
+{
+    char why[P9_LINE + 256];
+    if (p9_conf_trust(path, owner, why, sizeof why) >= 0)
+        return 0;
+    fprintf(stderr, "9share: nothing was changed: %s\n", why);
+    return 1;
+}
+
 int cmd_export(int argc, char **argv)
 {
     char confp[PB], dir[P9_LINE], rp[PATH_MAX], text[3 * P9_LINE], user[128];
@@ -72,6 +83,8 @@ int cmd_export(int argc, char **argv)
     if (!nineshare_valid_path(dir))
         return fail("%s: the directory needs an absolute path of letters, digits and . _ + @ - / (no spaces)", dir);
     p9_user_conf_path(NULL, confp, sizeof confp);
+    if (conf_refused(confp, (unsigned)getuid()))
+        return 1;
     nineshare_conf_init(&c);
     if (p9_file_exists(confp))
         nineshare_conf_parse(confp, &c);
@@ -109,6 +122,8 @@ int cmd_unexport(int argc, char **argv)
         return 2;
     }
     p9_user_conf_path(NULL, confp, sizeof confp);
+    if (conf_refused(confp, (unsigned)getuid()))
+        return 1;
     nineshare_conf_init(&c);
     if (p9_file_exists(confp))
         nineshare_conf_parse(confp, &c);
@@ -151,6 +166,8 @@ int cmd_mount(int argc, char **argv)
     if (!nineshare_valid_path(at))
         return fail("%s: the mount point needs an absolute path of letters, digits and . _ + @ - / (no spaces)", at);
     p9_system_conf_path(confp, sizeof confp);
+    if (conf_refused(confp, 0))
+        return 1;
     nineshare_conf_init(&c);
     if (p9_file_exists(confp))
         nineshare_conf_parse(confp, &c);
@@ -184,6 +201,8 @@ int cmd_unmount(int argc, char **argv)
         return 2;
     }
     p9_system_conf_path(confp, sizeof confp);
+    if (conf_refused(confp, 0))
+        return 1;
     nineshare_conf_init(&c);
     if (p9_file_exists(confp))
         nineshare_conf_parse(confp, &c);
@@ -261,6 +280,15 @@ int cmd_status(void)
         printf("daemon:  running (pid %d)\n", dpid);
     else
         printf("daemon:  %s\n", daemon ? "running" : "not running (sudo " NINESHARE_LIBEXECDIR "/9share-init enable)");
+    {   /* a configuration file that others could change is not used: say so, where it is looked at */
+        char why[P9_LINE + 256], path[PB];
+        p9_system_conf_path(path, sizeof path);
+        if (p9_conf_trust(path, 0, why, sizeof why) < 0)
+            printf("warning: the daemon does not use %s: %s\n", path, why);
+        p9_user_conf_path(NULL, path, sizeof path);
+        if (p9_conf_trust(path, (unsigned)getuid(), why, sizeof why) < 0)
+            printf("warning: 9share serve does not use %s: %s\n", path, why);
+    }
     p9_user_conf_path(NULL, confp, sizeof confp);
     p9_state_dir(state, sizeof state);
     nineshare_conf_init(&c);
@@ -458,6 +486,53 @@ int cmd_restart(int argc, char **argv)
         return fail("%s", "the daemon did not start (see /var/log/9share.log)");
     printf("9share: started the daemon (pid %d)\n", pid);
     return 0;
+}
+
+/* readahead: how far ahead the relays of this machine read.  The setting is the file prefetch-kb of the system directory; the relays look at it about
+ * once a second, so a change needs no restart and no remount.  Without an argument it says what is set. */
+int cmd_readahead(int argc, char **argv)
+{
+    char path[P9_LINE + 32], msg[P9_LINE + 128];
+    int kb, bad;
+    snprintf(path, sizeof path, "%s/prefetch-kb", p9_sysconf_dir());
+    if (argc > 1) {
+        fprintf(stderr, "usage: 9share readahead [off|on|KB]\n");
+        return 2;
+    }
+    if (argc == 1) {
+        char *end;
+        long v = !strcmp(argv[0], "off") ? 0 : strtol(argv[0], &end, 10);
+        int is_on = !strcmp(argv[0], "on") || !strcmp(argv[0], "default");
+        if (!is_on && strcmp(argv[0], "off") != 0 && (*argv[0] == '\0' || *end != '\0' || v < 0 || v > 65536)) {
+            fprintf(stderr, "usage: 9share readahead [off|on|KB]   (KB: 1 to 65536)\n");
+            return 2;
+        }
+        if (geteuid() != 0 && !getenv("NINESHARE_SYSCONFDIR"))
+            return fail("%s needs root: run it with sudo", "readahead");
+        if (is_on) {                                       /* "on" is the default, which is no file at all */
+            if (unlink(path) != 0 && errno != ENOENT) {
+                snprintf(msg, sizeof msg, "cannot remove %s: %s", path, strerror(errno));
+                return fail("%s", msg);
+            }
+        } else {
+            char num[32];
+            snprintf(num, sizeof num, "%ld\n", v);
+            if (p9_write_file(path, num, strlen(num), 0644) < 0) {
+                snprintf(msg, sizeof msg, "cannot write %s: %s", path, strerror(errno));
+                return fail("%s", msg);
+            }
+        }
+    }
+    bad = p9_prefetch_kb(&kb) < 0;
+    if (bad)
+        printf("9share: %s is not usable: the relays keep what they have\n", path);
+    else if (kb == 0)
+        printf("9share: read-ahead is off");
+    else
+        printf("9share: read-ahead is %d KB%s", kb, access(path, F_OK) != 0 ? " (the default)" : "");
+    if (!bad)
+        printf("%s\n", argc == 1 ? "; mounts in use take it up within a second or two" : "");
+    return bad ? 1 : 0;
 }
 
 /* WSL2 has no systemd: the [boot] command of /etc/wsl.conf starts the daemon.  A command that is there is kept and runs first. */

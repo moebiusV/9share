@@ -353,6 +353,8 @@ static unsigned fid_cap(const px_t *x, const struct px_fid *f)
 static void top_up(px_t *x, struct px_fid *f)
 {
     unsigned cap = fid_cap(x, f), want = f->target < cap ? f->target : cap;
+    if (!x->c.window_bytes)
+        return;
     while (f->nents < want && !f->eof && !f->nofetch) {
         struct px_entry *e;
         uint8_t m[23];
@@ -390,7 +392,7 @@ static void top_up(px_t *x, struct px_fid *f)
 /* what the kernel asks for with Tread: answered from what was read ahead, or sent on.  Returns -1 only when memory or tags run out. */
 static int on_tread(px_t *x, uint16_t ktag, uint32_t fid, uint64_t off, uint32_t count)
 {
-    struct px_fid *f = x->c.window_bytes ? fid_find(x, fid) : NULL;
+    struct px_fid *f = fid_find(x, fid);          /* followed whether or not reading ahead is on: it can be switched on at any time */
     struct px_entry *e;
     int seq;
     if (!f || !f->opened || !f->ro || count == 0)
@@ -765,6 +767,23 @@ void px_free(px_t *x)
     free(x->req); free(x->freetag); free(x->k2u); free(x->parked);
     free(x->in[0].p); free(x->in[1].p); free(x->out[0].p); free(x->out[1].p);
     free(x);
+}
+
+void px_set_window(px_t *x, size_t window_bytes)
+{
+    unsigned i;
+    x->c.window_bytes = window_bytes;
+    if (window_bytes)
+        return;                                       /* on: the next reads in order start it */
+    drop_all_entries(x);                              /* off: what was read ahead goes, and a read that waited for it goes to the server */
+    for (i = 0; i < HASH; i++) {
+        struct px_fid *f;
+        for (f = x->fids[i]; f; f = f->hnext) {
+            f->run = 0;
+            f->target = 2;
+            f->eof = f->nofetch = 0;
+        }
+    }
 }
 
 void px_tick(px_t *x, time_t now)
