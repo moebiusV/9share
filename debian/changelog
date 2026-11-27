@@ -1,3 +1,15 @@
+9share (0.1.0-9) unstable; urgency=medium
+
+  * daud no longer hangs on SIGTERM when connections end at the same moment (about one run in twelve of the old shutdown test): the cleanup of a
+    connection (libnpfs/conn.c, np_conn_cleanup) is uncancellable, because the shutdown cancels the connection's thread and a cancellation inside the
+    cleanup left the connection uncounted, so np_srv_shutdown waited for it for ever.  New test: tests/test_daud_shutdown.c (50 connections with
+    attached fids, dropped together with SIGTERM; it fails on the old daud and passes on this one).
+  * libnpfs/srv.c: np_tpool_destroy sets the workers' shutdown flag and wakes them under srv->lock (a worker could miss the wakeup and sleep for ever);
+    np_tpool_create is told whether its caller holds the lock.
+  * test_9p now fails if daud does not leave on SIGTERM (it used to kill it after a wait and print a note).
+
+ -- David Walther <david@clearbrookdistillery.com>  Fri, 27 Nov 2026 06:00:00 -0700
+
 9share (0.1.0-8) unstable; urgency=medium
 
   * msize is 128 KB (it was 1 MB): the kernel's 9p client wants a contiguous buffer of that size for each request, and a whole-file read through the
