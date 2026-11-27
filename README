@@ -60,6 +60,13 @@ connection, with its open files, never notices.  The root daemon there mounts it
 kernel's 9p client.  A mount waits for a lost connection for up to its hold time (600
 seconds unless set), then is removed, and comes back when the exporter does.
 
+Speed: the relay understands 9P.  When a file is read in sequence it asks daud for the following
+pieces ahead of time (up to 64 requests and 2 MiB in flight, as scp does) and answers the kernel
+from what has arrived, so the round trip of the link no longer sets the speed.  A write, a change
+of attributes, a seek or three seconds discards what was read ahead.  `sudo 9share readahead
+[off|on|KB]` changes it while running; `sudo 9share shutdown` and `sudo 9share restart` stop and
+restart the daemon cleanly.
+
 Requirements: Linux with the 9p module (Debian, Ubuntu, WSL2 and others), openssh-client,
 and key-based ssh from the machine with the files to the one that shows them.
 To build from source: a C compiler, autoconf, automake and autoconf-archive.

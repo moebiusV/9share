@@ -39,6 +39,12 @@ sudo 9share mount alice projects /mnt/projects
 9share unexport projects  # stop sharing
 ```
 
+```
+sudo 9share shutdown      # stop the daemon and unmount cleanly (--force if something holds a mount)
+sudo 9share restart       # the same, then start again
+sudo 9share readahead     # show read-ahead; `off`, `on` or a size in KB changes it while running
+```
+
 Several directories, several machines, and both directions at once are each one more block of configuration.
 
 ### The configuration
@@ -78,6 +84,12 @@ Requirements: Linux with the 9p module, openssh-client, and key-based ssh from t
 1. `9share serve` runs **daud**, a 9P2000.L file server, as you, unprivileged. daud is a fork of [diod](https://github.com/chaos/diod) that lives in this package (it needs no munge, no lua and no root).
 2. daud runs **ssh** to the other machine, where `9share link` joins it to a relay run as the mount's user. The 9P connection rides a **resumable link** over that: each end keeps the bytes the other has not acknowledged, so when ssh drops and is run again they resend exactly what is missing, and the connection, with its open files, never notices. ssh runs with keepalives, so a dead connection is noticed in about 45 seconds.
 3. The root daemon on the other machine mounts it with the kernel's 9p client, `nosuid,nodev`, and unmounts it only when the session is given up (the `hold` time, 600 seconds unless set).
+
+### Speed
+
+A program reading a mounted file makes the kernel ask for one piece at a time and wait for each answer, so on a link with a round trip of tens of milliseconds the round trips, not the bandwidth, set the speed. The relay therefore speaks 9P: when it sees a file read in sequence it asks for the following pieces ahead of time (up to 64 requests, 2 MiB in flight, as scp does) and answers the kernel from what has already arrived. Anything that could make that data stale (a write, a change of attributes, a clunk, a seek, three seconds) throws it away, and a read that fails is never invented. Measured on a 100 MB read through a wide-area link, the share runs at 9.9 to 11.8 MB/s when the connection is clean, the same as scp on that link; when TCP is losing packets both slow down together. Small reads gained about tenfold. `sudo 9share readahead off` turns it off while running.
+
+The mount's message size is 128 KB: larger ones need that much contiguous memory per request in the kernel, and 1 MB was seen to fail under memory pressure.
 
 ### Security
 
