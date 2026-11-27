@@ -15,7 +15,7 @@ while [ $# -gt 0 ]; do
     case $1 in -o) shift 2;; -T|-N) shift;; *) break;; esac
 done
 echo "$*" >> "$FAKE_LOG"
-exec sleep 600
+exec sleep 601.37
 EOS
 chmod +x "$T/bin/ssh"
 fail=0; n=0
@@ -85,6 +85,8 @@ check "a block with a mistake is not started" '! pgrep -f -- "third.example.org"
 check "and the mistake is reported with its place" 'grep -q "9share.conf:[0-9]*: " "$T/serve.log"'
 
 kill -TERM $SERVE; wait $SERVE 2>/dev/null
-check "serve ends on SIGTERM and takes daud and ssh with it" '! pgrep -f -- "--dial .* 9share link" >/dev/null && ! pgrep -f "sleep 600" >/dev/null'
+# Only this test's own processes: its hosts are *.example.org and its stand-in for ssh sleeps 601.37 s.  (Matching any "--dial ... 9share link" or
+# "sleep 600" made the test fail on a machine that was really exporting a directory.)
+check "serve ends on SIGTERM and takes daud and ssh with it" '! pgrep -f -- "--dial .* [a-z]*.example.org 9share link" >/dev/null && ! pgrep -f "sleep 601.37" >/dev/null'
 echo "$n checks, $fail failed"
 [ $fail -eq 0 ]

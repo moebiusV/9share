@@ -1,6 +1,6 @@
 bin_PROGRAMS = 9share
 
-9share_SOURCES = main.c cmds.c cmds.h serve.c boot.c relay.c util.c conf.c 9share.h 9share_conf.h \
+9share_SOURCES = main.c cmds.c cmds.h serve.c boot.c relay.c proxy.c proxy.h util.c conf.c 9share.h 9share_conf.h \
                   9share_conf.c hbnf_conf.c hbnf_conf.h
 
 9share_CPPFLAGS = -DNINESHARE_VERSION='"$(VERSION)"' -DNINESHARE_SYSCONFDIR='"$(sysconfdir)"' -DNINESHARE_DAUD='"$(sbindir)/daud"' -DNINESHARE_LIBEXECDIR='"$(pkglibexecdir)"'

@@ -1,6 +1,8 @@
 /* util.c -- logging, paths, files, running programs, and editing the text of a config file. */
 #include "9share.h"
 #include <errno.h>
+#include <ctype.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
@@ -264,6 +266,149 @@ int p9_lock_held(const char *path)
     held = flock(fd, LOCK_EX | LOCK_NB) < 0;
     close(fd);
     return held;
+}
+
+const char *p9_run_dir(void)
+{
+    const char *e = getenv("NINESHARE_RUNDIR");
+    return e && *e ? e : "/run";
+}
+
+int p9_proc_alive(int pid)
+{
+    char path[64], buf[512], *p;
+    FILE *f;
+    if (pid <= 0)
+        return 0;
+    snprintf(path, sizeof path, "/proc/%d/stat", pid);
+    if (!(f = fopen(path, "r")))
+        return 0;
+    p = fgets(buf, sizeof buf, f);
+    fclose(f);
+    if (!p || !(p = strrchr(buf, ')')))
+        return 0;
+    return p[2] != 'Z' && p[2] != 'X';             /* "pid (comm) S ...": a zombie has ended, only nobody has waited for it */
+}
+
+/* Is PID a `9share boot`?  Its command line has an argument whose last part is 9share, followed by "boot" (a script run through an
+ * interpreter has the interpreter's name first, so the first argument is not the one to look at).  A pid from a file is never trusted
+ * without this: after a reboot the number belongs to something else, and that must not be sent a signal. */
+static int is_boot_process(int pid)
+{
+    char path[64], buf[4096], *p, *end;
+    ssize_t n;
+    int fd;
+    snprintf(path, sizeof path, "/proc/%d/cmdline", pid);
+    if ((fd = open(path, O_RDONLY | O_CLOEXEC)) < 0)
+        return 0;
+    n = read(fd, buf, sizeof buf - 1);
+    close(fd);
+    if (n <= 0)
+        return 0;
+    buf[n] = '\0';
+    end = buf + n;
+    for (p = buf; p < end; p += strlen(p) + 1) {
+        const char *base = strrchr(p, '/');
+        base = base ? base + 1 : p;
+        if (!strcmp(base, "9share")) {
+            char *next = p + strlen(p) + 1;
+            return next < end && !strcmp(next, "boot");
+        }
+    }
+    return 0;
+}
+
+int p9_daemon_pid(void)
+{
+    char path[P9_LINE], *txt;
+    DIR *d;
+    struct dirent *e;
+    int found = 0;
+    snprintf(path, sizeof path, "%s/9share.pid", p9_run_dir());
+    if ((txt = p9_read_file(path, NULL))) {
+        long v = strtol(txt, NULL, 10);
+        free(txt);
+        if (v > 1 && p9_proc_alive((int)v) && is_boot_process((int)v))
+            return (int)v;
+    }
+    if (getenv("NINESHARE_RUNDIR"))                  /* tests: only the file counts, whatever runs on this machine */
+        return 0;
+    /* no usable pid file (a daemon started before there was one): look through /proc */
+    if (!(d = opendir("/proc")))
+        return 0;
+    while (!found && (e = readdir(d))) {
+        int pid = atoi(e->d_name);
+        if (pid > 1 && isdigit((unsigned char)e->d_name[0]) && pid != (int)getpid() && p9_proc_alive(pid) && is_boot_process(pid))
+            found = pid;
+    }
+    closedir(d);
+    return found;
+}
+
+/* the first line of the file at PATH, cut at its ends; NULL if there is no such file */
+static char *first_line(const char *path)
+{
+    char *txt = p9_read_file(path, NULL), *nl, *b, *e;
+    if (!txt)
+        return NULL;
+    if ((nl = strpbrk(txt, "\r\n")))
+        *nl = '\0';
+    for (b = txt; *b == ' ' || *b == '\t'; b++)
+        ;
+    for (e = b + strlen(b); e > b && (e[-1] == ' ' || e[-1] == '\t'); e--)
+        ;
+    *e = '\0';
+    memmove(txt, b, (size_t)(e - b) + 1);
+    return txt;
+}
+
+int p9_mount_options(char *opts, size_t n)
+{
+    static const char *own[] = { "trans", "rfdno", "wfdno", "uname", "aname", "access", "version", "msize", NULL };   /* 9share's own */
+    char path[P9_LINE + 32], *l, *p, *tok, *sv = NULL;      /* the system directory (P9_LINE at most) and a file name */
+    int rc = 0, i;
+    opts[0] = '\0';
+    snprintf(path, sizeof path, "%s/mount-options", p9_sysconf_dir());
+    if ((l = first_line(path)) && *l) {
+        int ok = strlen(l) < n && strlen(l) < 200 && l[0] != ',' && l[strlen(l) - 1] != ',' && !strstr(l, ",,");
+        for (p = l; ok && *p; p++)
+            if (!isalnum((unsigned char)*p) && !strchr("_=,.-", *p))
+                ok = 0;
+        if (ok) {
+            char *copy = strdup(l);
+            for (tok = copy ? strtok_r(copy, ",", &sv) : NULL; tok && ok; tok = strtok_r(NULL, ",", &sv)) {
+                size_t klen = strcspn(tok, "=");
+                for (i = 0; own[i]; i++)
+                    if (strlen(own[i]) == klen && !strncmp(own[i], tok, klen))
+                        ok = 0;
+            }
+            free(copy);
+        }
+        if (ok)
+            snprintf(opts, n, "%s", l);
+        else
+            rc = -1;
+    }
+    free(l);
+    return rc;
+}
+
+int p9_prefetch_kb(int *kb)
+{
+    char path[P9_LINE + 32], *l;
+    int rc = 0;
+    *kb = 2048;                                      /* what scp keeps in flight: 64 requests of 32 KB */
+    snprintf(path, sizeof path, "%s/prefetch-kb", p9_sysconf_dir());
+    if ((l = first_line(path)) && *l) {
+        char *end;
+        long v = strtol(l, &end, 10);
+        if (*end == '\0' && v >= 0 && v <= 65536)
+            *kb = (int)v;
+        else
+            rc = -1;
+    }
+    free(l);
+    return rc;
 }
 
 int p9_run(char *const argv[], int timeout, char *out, size_t outsz)

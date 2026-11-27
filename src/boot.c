@@ -196,14 +196,26 @@ static void relay_end(struct mstate *ms, const struct nineshare_mount *m)
 
 /* the exporter's session began: mount over the kernel's end of the socket pair.  mount(2) waits for the server's answer, which
  * needs the relay and the link to run, so a child makes the call and this loop goes on. */
+/* The size of one 9P message: the most one request or one answer carries (a read of a big file is a series of requests of at most this size less a
+ * 24 byte header).  It also sets the size of the buffers the kernel's 9p client asks for, one or two for every request, each a single contiguous
+ * block of memory: 1 MB (order 8) was asked for on a machine whose free memory was 400 MB of 63 GB and had no free block that big, and a whole-file
+ * read failed with ENOMEM ("Cannot allocate memory"); 64 KB had failed once as well, on a machine under pressure.  Since the relay reads ahead (see
+ * proxy.c), the speed no longer depends on the size of a request, so it is small: 128 KB (order 5) is a block a busy machine still has.  The
+ * author's choice, 2026-11-27 (it was 1 MB for a day: the prototype's). */
+#define NINESHARE_MSIZE 131072
+
 static void mounter_start(struct mstate *ms, const struct nineshare_mount *m, const char *uname, const char *aname, int ro)
 {
-    char opts[3 * P9_LINE];
+    char opts[3 * P9_LINE], extra[256];
     if (ms->mounter > 0 || ms->kfd < 0)
         return;
     p9_mkdir_p(m->at, 0755);
-    snprintf(opts, sizeof opts, "trans=fd,rfdno=%d,wfdno=%d,version=9p2000.L,uname=%s,access=any,aname=%s,msize=65536",
-             ms->kfd, ms->kfd, uname, aname);
+    snprintf(opts, sizeof opts, "trans=fd,rfdno=%d,wfdno=%d,version=9p2000.L,uname=%s,access=any,aname=%s,msize=%d",
+             ms->kfd, ms->kfd, uname, aname, NINESHARE_MSIZE);
+    if (p9_mount_options(extra, sizeof extra) < 0)
+        syslog(LOG_WARNING, "%s/mount-options is not usable (see 9share(8)): ignored", p9_sysconf_dir());
+    if (extra[0])
+        snprintf(opts + strlen(opts), sizeof opts - strlen(opts), ",%s", extra);
     ms->mount_t0 = time(NULL);
     ms->mounter = fork();
     if (ms->mounter == 0) {
@@ -332,6 +344,7 @@ int p9_boot(int detach)
     pid_t kids[64];
     uid_t kid_uid[64];
     int nkids = 0, lk, i;
+    char pidp[P9_LINE];
     char **managed = NULL;
     size_t nmanaged = 0, k;
 
@@ -356,6 +369,13 @@ int p9_boot(int detach)
         return 1;
     }
     openlog("9share", LOG_PID, LOG_DAEMON);
+    {   /* so that `9share status` (any user) and `9share shutdown` find this process; a stale file is not trusted: see p9_daemon_pid */
+        char num[32];
+        snprintf(pidp, sizeof pidp, "%s/9share.pid", p9_run_dir());
+        snprintf(num, sizeof num, "%d\n", (int)getpid());
+        if (p9_write_file(pidp, num, strlen(num), 0644) < 0)
+            fprintf(stderr, "9share: cannot write %s: %s\n", pidp, strerror(errno));
+    }
     memset(&sa, 0, sizeof sa);
     sa.sa_handler = on_term;
     sigaction(SIGTERM, &sa, NULL);
@@ -460,6 +480,7 @@ int p9_boot(int detach)
     for (i = 0; i < nkids; i++)
         kill(kids[i], SIGTERM);
     free(self);
+    unlink(pidp);
     close(lk);
     return 0;
 }

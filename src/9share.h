@@ -14,7 +14,7 @@
 #define NINESHARE_SYSCONFDIR "/etc"
 #endif
 #ifndef NINESHARE_LIBEXECDIR
-#define NINESHARE_LIBEXECDIR "/usr/lib/9share"
+#define NINESHARE_LIBEXECDIR "/usr/libexec/9share"
 #endif
 #ifndef NINESHARE_DAUD
 #define NINESHARE_DAUD "/usr/sbin/daud"
@@ -38,6 +38,15 @@ int   p9_write_file(const char *path, const char *data, size_t len, mode_t mode)
 int   p9_file_exists(const char *path);
 int   p9_lock(const char *path);                  /* fd holding the lock, or -1 when someone else has it */
 int   p9_lock_held(const char *path);             /* never creates the file */
+const char *p9_run_dir(void);                     /* /run, or $NINESHARE_RUNDIR (tests) */
+int   p9_proc_alive(int pid);                     /* running (not gone, not a zombie) */
+int   p9_daemon_pid(void);                        /* the pid of the running `9share boot`, or 0 */
+/* The optional files in the system directory that tune the mount.  mount-options: extra options for the kernel's 9p mount, such as cache=loose
+ * (none of 9share's own can be set this way); OPTS gets them.  Returns 0, or -1 when the file was there and was refused (it is then as if it
+ * were not): the caller says so.  prefetch-kb: how far ahead the relay reads for a file read in order, in KB (default 2048, 0 = not at all);
+ * KB gets it, and -1 is returned when the file was refused (the default is used). */
+int   p9_mount_options(char *opts, size_t n);
+int   p9_prefetch_kb(int *kb);
 /* Run argv; its standard output (up to outsz-1 bytes) goes to OUT if given.  Returns the exit status,
  * 124 after TIMEOUT seconds (the child is killed), -1 if it cannot be run. */
 int   p9_run(char *const argv[], int timeout, char *out, size_t outsz);

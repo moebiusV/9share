@@ -5,3 +5,8 @@
 
 override_dh_auto_test:
 	$(MAKE) -C tests check
+
+# the maintainer scripts run the helper from here: a build that put it elsewhere would install and silently set nothing up
+override_dh_auto_install:
+	dh_auto_install
+	test -x debian/9share/usr/libexec/9share/9share-init

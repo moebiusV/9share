@@ -1,6 +1,7 @@
 /* test_conf.c -- the parser of 9share.conf, its checks, and the editing of the file's text. */
 #include "../src/9share.h"
 #include "test.h"
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -97,7 +98,7 @@ int main(void)
     free(text);
 
     /* what may go where */
-    CHECK(nineshare_valid_name("claude") && nineshare_valid_name("a.b_c-d") && !nineshare_valid_name("-a") && !nineshare_valid_name("a b")
+    CHECK(nineshare_valid_name("projects") && nineshare_valid_name("a.b_c-d") && !nineshare_valid_name("-a") && !nineshare_valid_name("a b")
           && !nineshare_valid_name("") && !nineshare_valid_name("a/b"));
     CHECK(nineshare_valid_user("alice") && nineshare_valid_user("_x") && !nineshare_valid_user("Alice") && !nineshare_valid_user("a b"));
     CHECK(nineshare_valid_host("bob.example.org") && nineshare_valid_host("me@box") && !nineshare_valid_host("-oProxyCommand=x")
@@ -122,5 +123,41 @@ int main(void)
         if (system(cmd) != 0)
             fprintf(stderr, "could not remove %s\n", dir);
     }
+
+    /* the optional files that tune the mount and the relay (root-owned, in the system directory) */
+    {
+        char opts[256];
+        int kb = -1;
+        setenv("NINESHARE_SYSCONFDIR", dir, 1);
+        unlink(strcat(strcpy(path, dir), "/mount-options"));
+        unlink(strcat(strcpy(path, dir), "/prefetch-kb"));
+        CHECK(p9_mount_options(opts, sizeof opts) == 0 && opts[0] == '\0');                              /* no file: nothing to add */
+        put("mount-options", "cache=loose\n", path);
+        CHECK(p9_mount_options(opts, sizeof opts) == 0 && !strcmp(opts, "cache=loose"));
+        put("mount-options", "  cache=loose,debug=1  \nsecond line is ignored\n", path);
+        CHECK(p9_mount_options(opts, sizeof opts) == 0 && !strcmp(opts, "cache=loose,debug=1"));
+        put("mount-options", "cache=loose; rm -rf /\n", path);
+        CHECK(p9_mount_options(opts, sizeof opts) < 0 && opts[0] == '\0');                               /* characters that are not options */
+        put("mount-options", "cache=loose,aname=/\n", path);
+        CHECK(p9_mount_options(opts, sizeof opts) < 0 && opts[0] == '\0');                               /* what 9share sets itself is not overridden */
+        put("mount-options", "msize=65536\n", path);
+        CHECK(p9_mount_options(opts, sizeof opts) < 0 && opts[0] == '\0');
+        put("mount-options", ",cache=loose\n", path);
+        CHECK(p9_mount_options(opts, sizeof opts) < 0);                                                  /* an empty option */
+
+        CHECK(p9_prefetch_kb(&kb) == 0 && kb == 2048);                                                   /* no file: the default */
+        put("prefetch-kb", "4096\n", path);
+        CHECK(p9_prefetch_kb(&kb) == 0 && kb == 4096);
+        put("prefetch-kb", " 0 \n", path);
+        CHECK(p9_prefetch_kb(&kb) == 0 && kb == 0);                                                      /* off */
+        put("prefetch-kb", "abc\n", path);
+        CHECK(p9_prefetch_kb(&kb) < 0 && kb == 2048);                                                    /* refused: the default */
+        put("prefetch-kb", "-5\n", path);
+        CHECK(p9_prefetch_kb(&kb) < 0 && kb == 2048);
+        put("prefetch-kb", "99999999\n", path);
+        CHECK(p9_prefetch_kb(&kb) < 0 && kb == 2048);
+        unsetenv("NINESHARE_SYSCONFDIR");
+    }
+
     DONE();
 }

@@ -5,7 +5,10 @@ set -e
 
 case "$1" in
 remove|deconfigure)
-    /usr/lib/9share/9share-init disable --from-package || true
+    INIT=/usr/libexec/9share/9share-init
+    if [ -x "$INIT" ]; then
+        "$INIT" disable --from-package || true
+    fi
     ;;
 esac
 

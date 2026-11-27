@@ -1,3 +1,63 @@
+9share (0.1.0-8) unstable; urgency=medium
+
+  * msize is 128 KB (it was 1 MB): the kernel's 9p client wants a contiguous buffer of that size for each request, and a whole-file read through the
+    share failed with "Cannot allocate memory" on a machine that had no free 1 MB block.  The read-ahead of 0.1.0-7 makes the speed independent of it.
+
+ -- David Walther <david@clearbrookdistillery.com>  Fri, 27 Nov 2026 05:00:00 -0700
+
+9share (0.1.0-7) unstable; urgency=medium
+
+  * The relay reads ahead, as scp does: when a file opened read-only is read in order it asks daud for the next blocks (up to 64 requests or
+    2 MB: /etc/9share/prefetch-kb, 0 = off) and answers the kernel's reads from them.  src/proxy.c is the 9P-aware state machine (tags are
+    mapped, flush is handled, a block is used once, writes and changes of the tree drop what was read ahead, 3 s at most); src/relay.c puts it
+    between the kernel's socket and the link.  Tests: test_proxy (fake kernel and server, fuzzed under ASAN and UBSAN), test_resume (real daud,
+    real link, carriers cut while reading in order: the bytes are right and the kernel's reads were answered from read-ahead).
+  * Removed the hook that was to set the mount's read_ahead_kb (it never worked: the kernel names the device 9p-<n>); /etc/9share/mount-options stays.
+
+ -- David Walther <david@clearbrookdistillery.com>  Fri, 27 Nov 2026 04:00:00 -0700
+
+9share (0.1.0-6) unstable; urgency=medium
+
+  * Two optional tuning files for the mount: /etc/9share/mount-options (extra kernel options, e.g. cache=readahead; 9share's own options cannot
+    be overridden) and /etc/9share/readahead-kb (the mount's read_ahead_kb).  Without a cache= option every read(2) is one request answered
+    before the next goes out, so a program reading 32 KB at a time got 1.3 MB/s where scp, which keeps 64 requests of 32 KB outstanding (read from
+    OpenSSH's sftp-client.c), got 33 to 39 MB/s over the same ssh.
+
+ -- David Walther <david@clearbrookdistillery.com>  Fri, 27 Nov 2026 03:00:00 -0700
+
+9share (0.1.0-5) unstable; urgency=medium
+
+  * New commands: 9share shutdown [--force] and 9share restart (root).  They stop the daemon and wait for it (systemd: through systemctl), and
+    never signal a process that is not really `9share boot`.
+  * The daemon writes /run/9share.pid; `9share status` finds the daemon through it (or, for one started before there was a file, through
+    /proc), so a normal user is told "running" (it said "not running" because the lock file is root-only).
+  * tests: test_shutdown.sh; test_serve.sh no longer fails on a machine that really exports a directory (its last check matched any
+    "--dial ... 9share link" process).
+
+ -- David Walther <david@clearbrookdistillery.com>  Fri, 27 Nov 2026 02:20:00 -0700
+
+9share (0.1.0-4) unstable; urgency=medium
+
+  * Mount with msize=1048576 instead of 65536: one request carried 64 KB, so a read of a big file was one round trip per 64 KB (3.6 MB/s over a
+    link with 10 ms round trip, where plain ssh does 9 to 16 MB/s).  1 MB is the author's choice; the kernel needs a contiguous block of that
+    size per request, which a busy machine may not find (ENOMEM): lower it then.
+
+ -- David Walther <david@clearbrookdistillery.com>  Fri, 27 Nov 2026 01:50:00 -0700
+
+9share (0.1.0-3) unstable; urgency=medium
+
+  * 9share wsl-boot no longer writes two command lines under [boot] when the user already has one (its own line was put in at the
+    [boot] header, before the user's command was seen); there is now exactly one, the script that runs the user's command first.
+
+ -- David Walther <david@clearbrookdistillery.com>  Fri, 27 Nov 2026 00:40:00 -0700
+
+9share (0.1.0-2) unstable; urgency=medium
+
+  * Fix the systemd unit: ExecStart was the unexpanded text ${exec_prefix}/bin/9share and systemd refused the unit.
+  * The install message no longer claims the service started.
+
+ -- David Walther <david@clearbrookdistillery.com>  Fri, 27 Nov 2026 00:10:00 -0700
+
 9share (0.1.0-1) unstable; urgency=medium
 
   * First package: 9share and daud.

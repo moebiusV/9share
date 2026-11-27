@@ -72,6 +72,8 @@ static int cut(void)
     return pid > 0 && kill((pid_t)pid, SIGKILL) == 0;
 }
 
+static char seen[4096];                            /* what the control pipe had said when wait_line last found its line */
+
 static int wait_line(int fd, const char *want, int secs)
 {
     char buf[4096];
@@ -82,8 +84,10 @@ static int wait_line(int fd, const char *want, int secs)
         if (k > 0) {
             n += (size_t)k;
             buf[n] = '\0';
-            if (strstr(buf, want))
+            if (strstr(buf, want)) {
+                memcpy(seen, buf, n + 1);
                 return 1;
+            }
         } else
             usleep(50000);
     }
@@ -218,6 +222,13 @@ int main(void)
     }
     close(kc);                                                   /* the kernel's end goes away: the relay says so and ends */
     CHECK(wait_line(ctl[0], "KCLOSED", 10));
+    {   /* the relay read ahead, and the kernel's reads were answered from it (prefetch-kb is at its default here) */
+        const char *ra = strstr(seen, "read-ahead: used=");
+        unsigned long used = ra ? strtoul(ra + strlen("read-ahead: used="), NULL, 10) : 0;
+        CHECK(used > 100);
+        if (used <= 100)
+            fprintf(stderr, "   (the relay said: %s)\n", ra ? ra : "nothing about read-ahead");
+    }
     kill(relay, SIGTERM);
     waitpid(relay, NULL, 0);
 

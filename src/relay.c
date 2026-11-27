@@ -9,6 +9,7 @@
  *       joins its standard input and output to ~/.9share/NAME.link: it is only a pipe, the link's rules are in the relay. */
 #include "9share.h"
 #include "../daud/src/liblink/link.h"
+#include "proxy.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -65,6 +66,10 @@ int p9_relay(int argc, char **argv)
     size_t kout_len = 0, kout_off = 0;
     const char *why = NULL;
     uid_t me = getuid();
+    px_t *px = NULL;                                    /* the 9P-aware part, unless read-ahead is off (prefetch-kb 0): then bytes only */
+    int pkb = 0;
+#define PXQ_SERVER (2u * 1024 * 1024)                   /* what may wait to go to the link before the kernel is not read any more */
+#define PXQ_KERNEL (4u * 1024 * 1024)                   /* ... and what may wait to go to the kernel before the link is not read any more */
 
     if (argc != 4)
         return 2;
@@ -94,6 +99,14 @@ int p9_relay(int argc, char **argv)
     fcntl(kfd, F_SETFL, fcntl(kfd, F_GETFL) | O_NONBLOCK);
     if (!(lk = lk_new(LK_ACCEPTOR, 0)))
         return 1;
+    if (p9_prefetch_kb(&pkb) < 0)
+        say(ctl, "LOG %s/prefetch-kb is not usable: %d KB is used", p9_sysconf_dir(), pkb);
+    if (pkb > 0) {
+        struct px_conf pc = { (size_t)pkb * 1024, PX_DEFAULT_REQUESTS, PX_DEFAULT_TOTAL, PX_DEFAULT_TTL };
+        if (!(px = px_new(&pc)))
+            say(ctl, "LOG out of memory for reading ahead: reading without");
+    }
+    say(ctl, "LOG %s", px ? "reading ahead (prefetch-kb)" : "not reading ahead");
 
     while (!stopping && !why) {
         struct pollfd p[3];
@@ -101,26 +114,61 @@ int p9_relay(int argc, char **argv)
         int n;
         short kev = 0;
 
-        /* what the link has for the kernel */
-        while (kout_off == kout_len && lk_avail(lk) > 0) {
-            kout_len = lk_read(lk, kout, sizeof kout);
-            kout_off = 0;
-        }
-        if (kout_off < kout_len) {
-            ssize_t k = write(kfd, kout + kout_off, kout_len - kout_off);
-            if (k > 0) {
-                kout_off += (size_t)k;
-                if (kout_off == kout_len)
-                    kout_off = kout_len = 0;
-            } else if (k < 0 && errno != EAGAIN && errno != EINTR) {
-                why = "KCLOSED";
-                break;
+        if (px) {
+            struct px_buf *tk = px_to_kernel(px), *ts = px_to_server(px);
+            px_tick(px, time(NULL));
+            /* what the link has for the kernel goes through the proxy, which may answer some of the kernel's reads by itself */
+            while (lk_avail(lk) > 0 && px_buf_avail(tk) < PXQ_KERNEL) {
+                uint8_t tmp[65536];
+                size_t got = lk_read(lk, tmp, sizeof tmp);
+                if (got == 0)
+                    break;
+                if (px_from_server(px, tmp, got) < 0) {
+                    say(ctl, "LOG the 9P stream from daud cannot be followed: the session ends");
+                    why = "RESET";
+                    break;
+                }
             }
+            if (why)
+                break;
+            if (px_buf_avail(tk) > 0) {
+                ssize_t k = write(kfd, px_buf_data(tk), px_buf_avail(tk));
+                if (k > 0)
+                    px_buf_consume(tk, (size_t)k);
+                else if (k < 0 && errno != EAGAIN && errno != EINTR) {
+                    why = "KCLOSED";
+                    break;
+                }
+            }
+            if (px_buf_avail(tk) > 0)
+                kev |= POLLOUT;
+            /* and what is for daud goes to the link as it has room */
+            if (px_buf_avail(ts) > 0 && lk_space(lk) > 0)
+                px_buf_consume(ts, lk_write(lk, px_buf_data(ts), px_buf_avail(ts)));
+            if (px_buf_avail(ts) < PXQ_SERVER)
+                kev |= POLLIN;
+        } else {
+            /* what the link has for the kernel */
+            while (kout_off == kout_len && lk_avail(lk) > 0) {
+                kout_len = lk_read(lk, kout, sizeof kout);
+                kout_off = 0;
+            }
+            if (kout_off < kout_len) {
+                ssize_t k = write(kfd, kout + kout_off, kout_len - kout_off);
+                if (k > 0) {
+                    kout_off += (size_t)k;
+                    if (kout_off == kout_len)
+                        kout_off = kout_len = 0;
+                } else if (k < 0 && errno != EAGAIN && errno != EINTR) {
+                    why = "KCLOSED";
+                    break;
+                }
+            }
+            if (kout_off < kout_len)
+                kev |= POLLOUT;
+            if (lk_space(lk) > 0)
+                kev |= POLLIN;
         }
-        if (kout_off < kout_len)
-            kev |= POLLOUT;
-        if (lk_space(lk) > 0)
-            kev |= POLLIN;
         p[0].fd = lsock; p[0].events = POLLIN; p[0].revents = 0;
         p[1].fd = lk_fd(lk); p[1].events = lk_events(lk); p[1].revents = 0;
         p[2].fd = kfd; p[2].events = kev; p[2].revents = 0;
@@ -153,9 +201,14 @@ int p9_relay(int argc, char **argv)
             }
         }
         if (p[2].revents & POLLIN) {
-            size_t room = lk_space(lk);
+            size_t room = px ? PXQ_SERVER : lk_space(lk);
             ssize_t k = read(kfd, kin, room < sizeof kin ? room : sizeof kin);
-            if (k > 0)
+            if (k > 0 && px) {
+                if (px_from_kernel(px, kin, (size_t)k) < 0) {
+                    say(ctl, "LOG the 9P stream from the kernel cannot be followed: the session ends");
+                    why = "RESET";
+                }
+            } else if (k > 0)
                 lk_write(lk, kin, (size_t)k);
             else if (k == 0 || (errno != EAGAIN && errno != EINTR))
                 why = "KCLOSED";
@@ -163,7 +216,8 @@ int p9_relay(int argc, char **argv)
             why = "KCLOSED";
         ev = lk_pump(lk, p[1].fd >= 0 ? p[1].revents : 0);
         ev |= lk_tick(lk, time(NULL), hold);
-        if (ev & LK_EV_NEW)
+        if (ev & LK_EV_NEW)                             /* (the proxy is not reset here: this relay has one session, it ends at RESET and LOST, and the kernel
+                                                         * may have sent its first messages before the link was up: they are in flight and their answers are due) */
             say(ctl, "NEW %s %s", lk_uname(lk), lk_aname(lk));
         if (ev & LK_EV_UP)
             say(ctl, "LOG link up");
@@ -174,9 +228,15 @@ int p9_relay(int argc, char **argv)
         if (ev & LK_EV_LOST)
             why = "LOST";
     }
+    if (px) {
+        struct px_stats st;
+        px_stats(px, &st);
+        say(ctl, "LOG read-ahead: used=%lu issued=%lu dropped=%lu forwarded=%lu", st.hits, st.issued, st.dropped, st.forwarded);
+    }
     if (why)
         say(ctl, "%s", why);
     lk_free(lk);
+    px_free(px);
     unlink(a.sun_path);
     return 0;
 }

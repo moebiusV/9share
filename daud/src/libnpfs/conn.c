@@ -145,6 +145,13 @@ np_conn_cleanup(void *a)
 {
 	Npconn *conn = (Npconn *)a;
 
+	/* This runs in two ways: on the cancellation of the thread (np_srv_shutdown), when POSIX has already made the thread uncancellable, and
+	 * on the normal way out of np_conn_read_proc (EOF, a bad message), when it has not.  On that second way a shutdown that began at the same
+	 * moment cancels the thread here, at the next cancellation point (the log write below, the wait for the references, close in
+	 * np_trans_destroy), and the thread ends without reaching np_srv_remove_conn_post: srv->conncount never falls to zero, and the main
+	 * thread waits for it in np_srv_shutdown for ever, with every other thread asleep.  Cleanup must run to the end. */
+	pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
+
 	np_conn_flush (conn);
 
 	xpthread_mutex_lock(&conn->lock);

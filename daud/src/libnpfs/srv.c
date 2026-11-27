@@ -28,7 +28,7 @@
 #include "xpthread.h"
 #include "npfsimpl.h"
 
-static Nptpool *np_tpool_create(Npsrv *srv, char *name);
+static Nptpool *np_tpool_create(Npsrv *srv, char *name, int srvlocked);
 static void np_tpool_cleanup (Npsrv *srv);
 static void *np_wthread_proc(void *a);
 static void np_srv_remove_workreq(Nptpool *tp, Npreq *req);
@@ -67,7 +67,7 @@ np_srv_create(int nwthread, int flags)
 	if (np_usercache_create (srv) < 0)
 		goto error;
 	srv->nwthread = nwthread;
-	if (!(srv->tpool = np_tpool_create (srv, "default")))
+	if (!(srv->tpool = np_tpool_create (srv, "default", 0)))
 		goto error;
 	np_tpool_incref (srv->tpool);
 	np_assert_srv = srv;
@@ -250,6 +250,8 @@ error:
 	return -1;
 }
 
+/* Called without srv->lock held: it takes the lock itself, and then waits for the threads to end, which they cannot do while it is held (a worker
+ * takes it first thing and again to leave). */
 static void
 np_tpool_destroy(Nptpool *tp)
 {
@@ -258,10 +260,15 @@ np_tpool_destroy(Nptpool *tp)
 	void *retval;
 	int err, i;
 
+	/* The flag and the wakeup are made under srv->lock, the mutex the workers hold while they look at the flag and sleep on reqcond (see
+	 * np_wthread_proc).  Without it a worker that has looked at the flag (clear) and not yet gone to sleep misses the broadcast, sleeps for ever,
+	 * and the join below never returns: ThreadSanitizer reports the unsynchronised access as a data race. */
+	xpthread_mutex_lock(&srv->lock);
 	for(wt = tp->wthreads; wt != NULL; wt = wt->next) {
 		wt->shutdown = 1;
 	}
 	xpthread_cond_broadcast(&tp->reqcond);
+	xpthread_mutex_unlock(&srv->lock);
 	for (i = 0, wt = tp->wthreads; wt != NULL; wt = next, i++) {
 		next = wt->next;
 		if ((err = pthread_join (wt->thread, &retval))) {
@@ -284,11 +291,10 @@ np_tpool_destroy(Nptpool *tp)
 }
 
 static Nptpool *
-np_tpool_create(Npsrv *srv, char *name)
+np_tpool_create(Npsrv *srv, char *name, int srvlocked)     /* srvlocked: the caller holds srv->lock (np_tpool_select does; np_srv_create cannot) */
 {
 	Nptpool *tp;
 
-	/* assert srv->lock held */
 	if (!(tp = malloc (sizeof (*tp)))) {
 		np_uerror (ENOMEM);
 		goto error;
@@ -308,8 +314,15 @@ np_tpool_create(Npsrv *srv, char *name)
 	}
 	return tp;
 error:
-	if (tp)
+	if (tp) {
+		/* np_tpool_destroy must not be entered with srv->lock held (it takes it, and the workers that were made need it to leave).  The caller
+		 * changes nothing of the server's when this fails, so letting the lock go for a moment is safe. */
+		if (srvlocked)
+			xpthread_mutex_unlock (&srv->lock);
 		np_tpool_destroy (tp);
+		if (srvlocked)
+			xpthread_mutex_lock (&srv->lock);
+	}
 	return NULL;
 }
 
@@ -345,7 +358,7 @@ np_tpool_select (Npreq *req)
 		}
 	}
 	if (!tp) {
-		tp = np_tpool_create(srv, req->fid->aname);
+		tp = np_tpool_create(srv, req->fid->aname, 1);
 		if (tp) {
 			NP_ASSERT (srv->tpool); /* default tpool */
 			tp->next = srv->tpool->next;

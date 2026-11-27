@@ -9,4 +9,6 @@ int cmd_mode(const char *mode, int argc, char **argv);
 int cmd_pair(int argc, char **argv);
 int cmd_status(void);
 int cmd_wsl_boot(int argc, char **argv);
+int cmd_shutdown(int argc, char **argv);
+int cmd_restart(int argc, char **argv);
 #endif

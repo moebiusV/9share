@@ -4,6 +4,13 @@ if INSTALL_UNIT
 systemdsystemunit_DATA = systemd/9share.service
 endif
 
+# The unit is made here, not by config.status: configure leaves bindir as the text ${exec_prefix}/bin, which make expands
+# and systemd does not ("Neither a valid executable name nor an absolute path").
+systemd/9share.service: systemd/9share.service.in Makefile
+	$(MKDIR_P) systemd
+	sed -e 's|__BINDIR__|$(bindir)|g' $(srcdir)/systemd/9share.service.in > $@
+CLEANFILES = systemd/9share.service
+
 # the first-run script and the one that makes the daemon start at boot the way this machine does it
 dist_bin_SCRIPTS = tools/9share-setup
 dist_pkglibexec_SCRIPTS = tools/9share-init

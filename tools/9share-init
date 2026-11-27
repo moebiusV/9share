@@ -42,7 +42,7 @@ enable() {
     case $kind in
     systemd)
         if [ -n "$from_package" ]; then
-            say "systemd: the service is enabled and started by the package"
+            say "systemd: the service is enabled by the package (see systemctl status 9share if it is not running)"
         elif systemctl enable --now $SVC.service; then
             say "systemd: enabled and started ($SVC.service)"
         else
@@ -68,7 +68,7 @@ enable() {
         fi ;;
     sysv)
         if [ -n "$from_package" ]; then
-            say "sysvinit: the service is enabled and started by the package"
+            say "sysvinit: the service is enabled by the package (see service 9share status if it is not running)"
         elif update-rc.d $SVC defaults >/dev/null 2>&1; then
             service $SVC start >/dev/null 2>&1 && say "sysvinit: enabled and started" \
                 || say "sysvinit: enabled; start it with: sudo service $SVC start"

@@ -6,7 +6,12 @@ set -e
 case "$1" in
 configure)
     # debhelper has done systemd and sysvinit; this does WSL2 and OpenRC, and says what cannot be done (it never fails the installation)
-    /usr/lib/9share/9share-init enable --from-package || true
+    INIT=/usr/libexec/9share/9share-init
+    if [ -x "$INIT" ]; then
+        "$INIT" enable --from-package || true
+    else
+        echo "9share: $INIT is missing: nothing was set up to start 9share at boot (sudo 9share boot --detach starts it)" >&2
+    fi
     if [ -z "${2:-}" ]; then
         cat <<'EOT'
 

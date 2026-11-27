@@ -26,6 +26,8 @@ static void usage(FILE *f)
           "\n"
           "  either:\n"
           "    9share status                    what is shared, what is mounted, what is running\n"
+          "    sudo 9share shutdown [--force]   stop the daemon (its mounts and exports end with it)\n"
+          "    sudo 9share restart              shutdown, then start it again\n"
           "    sudo 9share wsl-boot [--remove]  start 9share at boot on WSL2 (no systemd there)\n"
           "\n"
           "  behind these: `9share boot [--detach]` (the root daemon, run by the 9share service) and\n"
@@ -61,6 +63,8 @@ int main(int argc, char **argv)
     if (!strcmp(c, "pair")) return cmd_pair(argc, argv);
     if (!strcmp(c, "status")) return cmd_status();
     if (!strcmp(c, "wsl-boot")) return cmd_wsl_boot(argc, argv);
+    if (!strcmp(c, "shutdown")) return cmd_shutdown(argc, argv);
+    if (!strcmp(c, "restart")) return cmd_restart(argc, argv);
     if (!strcmp(c, "serve")) return p9_serve();
     if (!strcmp(c, "relay")) return p9_relay(argc, argv);
     if (!strcmp(c, "link")) return p9_link(argc, argv);

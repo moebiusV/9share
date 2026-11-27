@@ -166,7 +166,7 @@ int cmd_mount(int argc, char **argv)
         return fail("cannot write %s", confp);
     p9_mkdir_p(at, 0755);
     printf("'%s' of %s will be shown at %s as soon as the exporter's tunnel is up\n", argv[1], argv[0], at);
-    if (!p9_lock_held("/run/9share.lock"))
+    if (p9_daemon_pid() <= 0 && !p9_lock_held("/run/9share.lock"))
         printf("(the daemon is not running: to start it now and at every boot, run  sudo %s/9share-init enable)\n", NINESHARE_LIBEXECDIR);
     return 0;
 }
@@ -256,8 +256,11 @@ int cmd_status(void)
     char confp[PB], state[P9_LINE], sockp[PB];
     struct nineshare_conf c;
     size_t i;
-    int daemon = p9_lock_held("/run/9share.lock");
-    printf("daemon:  %s\n", daemon ? "running" : "not running (sudo " NINESHARE_LIBEXECDIR "/9share-init enable)");
+    int dpid = p9_daemon_pid(), daemon = dpid > 0 || (!getenv("NINESHARE_RUNDIR") && p9_lock_held("/run/9share.lock"));
+    if (daemon && dpid > 0)
+        printf("daemon:  running (pid %d)\n", dpid);
+    else
+        printf("daemon:  %s\n", daemon ? "running" : "not running (sudo " NINESHARE_LIBEXECDIR "/9share-init enable)");
     p9_user_conf_path(NULL, confp, sizeof confp);
     p9_state_dir(state, sizeof state);
     nineshare_conf_init(&c);
@@ -342,12 +345,127 @@ static int wsl_boot_remove(void)
     return 0;
 }
 
+/* shutdown and restart: the root daemon.  Under systemd the service goes through systemd (a process that was only signalled would be
+ * started again at once: Restart=always); otherwise the process gets SIGTERM and is waited for, as long as it takes to end the mounts.
+ * NINESHARE_RUNDIR (tests) keeps the root check and systemd out of it. */
+static int systemd_runs_9share(void)
+{
+    char *av[] = { "systemctl", "is-active", "--quiet", "9share.service", NULL };
+    if (getenv("NINESHARE_RUNDIR") || !p9_file_exists("/run/systemd/system"))
+        return 0;
+    return p9_run(av, 10, NULL, 0) == 0;
+}
+
+static int need_root(const char *what)
+{
+    if (geteuid() != 0 && !getenv("NINESHARE_RUNDIR"))
+        return fail("%s needs root: run it with sudo", what);
+    return 0;
+}
+
+static int daemon_stop(int force)                       /* 0: it is stopped (or was not running); 1: it is not */
+{
+    char pidp[P9_LINE], msg[P9_LINE];
+    const char *w = getenv("NINESHARE_SHUTDOWN_WAIT");
+    int pid, wait_s = w && atoi(w) > 0 ? atoi(w) : 30, i;
+    if (systemd_runs_9share()) {
+        char *av[] = { "systemctl", "stop", "9share.service", NULL };
+        if (p9_run(av, 120, NULL, 0) != 0)
+            return fail("%s", "systemctl stop 9share.service failed");
+        printf("9share: stopped (the 9share service)\n");
+        return 0;
+    }
+    if ((pid = p9_daemon_pid()) <= 0) {
+        printf("9share: the daemon is not running\n");
+        return 0;
+    }
+    snprintf(pidp, sizeof pidp, "%s/9share.pid", p9_run_dir());
+    kill(pid, SIGTERM);
+    for (i = 0; i < wait_s * 10 && p9_proc_alive(pid); i++)
+        usleep(100000);
+    if (p9_proc_alive(pid)) {
+        if (!force) {
+            snprintf(msg, sizeof msg, "the daemon (pid %d) is still there after %d s: it is either still taking the mounts down, or stuck. "
+                     "Wait and run this again, or use  9share shutdown --force  (it kills the daemon; mounts and exports may stay behind)", pid, wait_s);
+            return fail("%s", msg);
+        }
+        kill(pid, SIGKILL);
+        for (i = 0; i < 50 && p9_proc_alive(pid); i++)
+            usleep(100000);
+        if (p9_proc_alive(pid)) {
+            snprintf(msg, sizeof msg, "the daemon (pid %d) did not end even when killed", pid);
+            return fail("%s", msg);
+        }
+        printf("9share: killed the daemon (pid %d); a mount or export it had may still be there (9share status)\n", pid);
+    } else {
+        printf("9share: stopped the daemon (pid %d)\n", pid);
+    }
+    unlink(pidp);
+    return 0;
+}
+
+int cmd_shutdown(int argc, char **argv)
+{
+    int force = 0;
+    if (argc == 1 && !strcmp(argv[0], "--force"))
+        force = 1;
+    else if (argc != 0) {
+        fprintf(stderr, "usage: 9share shutdown [--force]\n");
+        return 2;
+    }
+    if (need_root("shutdown"))
+        return 1;
+    return daemon_stop(force);
+}
+
+int cmd_restart(int argc, char **argv)
+{
+    const char *hook = getenv("NINESHARE_RUNDIR") ? getenv("NINESHARE_BOOT_CMD") : NULL;     /* tests: what stands in for the start */
+    char *self, *av[4];
+    int i, pid = 0;
+    (void)argv;
+    if (argc != 0) {
+        fprintf(stderr, "usage: 9share restart\n");
+        return 2;
+    }
+    if (need_root("restart"))
+        return 1;
+    if (systemd_runs_9share()) {
+        char *sv[] = { "systemctl", "restart", "9share.service", NULL };
+        if (p9_run(sv, 120, NULL, 0) != 0)
+            return fail("%s", "systemctl restart 9share.service failed");
+        printf("9share: restarted (the 9share service)\n");
+        return 0;
+    }
+    if (daemon_stop(0))
+        return 1;
+    if (hook) {
+        char *hv[] = { "sh", "-c", (char *)hook, NULL };
+        return p9_run(hv, 30, NULL, 0) == 0 ? 0 : fail("%s", "cannot start the daemon");
+    }
+    self = p9_self();
+    av[0] = self ? self : "9share";
+    av[1] = "boot";
+    av[2] = "--detach";
+    av[3] = NULL;
+    i = p9_run(av, 20, NULL, 0);
+    free(self);
+    if (i != 0)
+        return fail("%s", "cannot start the daemon (see /var/log/9share.log)");
+    for (i = 0; i < 50 && (pid = p9_daemon_pid()) <= 0; i++)
+        usleep(100000);
+    if (pid <= 0)
+        return fail("%s", "the daemon did not start (see /var/log/9share.log)");
+    printf("9share: started the daemon (pid %d)\n", pid);
+    return 0;
+}
+
 /* WSL2 has no systemd: the [boot] command of /etc/wsl.conf starts the daemon.  A command that is there is kept and runs first. */
 int cmd_wsl_boot(int argc, char **argv)
 {
     const char *path = getenv("NINESHARE_WSL_CONF") ? getenv("NINESHARE_WSL_CONF") : "/etc/wsl.conf";
     char *text = p9_read_file(path, NULL), *out, *line, *save = NULL, *self, mine[P9_LINE];
-    int in_boot = 0, done = 0, have_boot = 0;
+    int in_boot = 0, done = 0, have_boot = 0, has_cmd = 0;
     size_t cap;
     if (argc == 1 && !strcmp(argv[0], "--remove"))
         return wsl_boot_remove();
@@ -366,6 +484,20 @@ int cmd_wsl_boot(int argc, char **argv)
     out = calloc(1, cap);
     if (!out)
         return 1;
+    {   /* Is there a [boot] command already?  Look first: our own line goes in at the [boot] header, which comes BEFORE the
+         * user's command, and writing both made a duplicate key (which of the two WSL runs is not something to depend on). */
+        char *copy = strdup(text), *l, *sv = NULL;
+        int b = 0;
+        for (l = copy ? strtok_r(copy, "\n", &sv) : NULL; l; l = strtok_r(NULL, "\n", &sv)) {
+            while (*l == ' ' || *l == '\t')
+                l++;
+            if (*l == '[')
+                b = !strncasecmp(l, "[boot]", 6);
+            else if (b && !strncmp(l, "command", 7) && strchr(l, '='))
+                has_cmd = 1;
+        }
+        free(copy);
+    }
     for (line = strtok_r(text, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
         char *t = line;
         while (*t == ' ' || *t == '\t')
@@ -399,7 +531,7 @@ int cmd_wsl_boot(int argc, char **argv)
             }
         }
         snprintf(out + strlen(out), cap - strlen(out), "%s\n", line);
-        if (in_boot && !done && !strncasecmp(t, "[boot]", 6)) {
+        if (in_boot && !done && !has_cmd && !strncasecmp(t, "[boot]", 6)) {
             snprintf(out + strlen(out), cap - strlen(out), "command = %s\n", mine);
             done = 1;
         }

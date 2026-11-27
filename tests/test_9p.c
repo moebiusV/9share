@@ -93,7 +93,13 @@ int main(void)
     close(fd);
 
     kill(pid, SIGTERM);
-    waitpid(pid, &st, 0);
+    for (i = 0; i < 50 && waitpid(pid, &st, WNOHANG) != pid; i++)
+        usleep(100000);
+    CHECK(i < 50);                                                  /* daud leaves on SIGTERM (it once did not, now and then: test_daud_shutdown.c) */
+    if (i == 50) {
+        kill(pid, SIGKILL);
+        waitpid(pid, &st, 0);
+    }
     for (i = 0; i < 1; i++) {
         char cmd[400];
         snprintf(cmd, sizeof cmd, "rm -rf '%s'", dir);

@@ -22,5 +22,5 @@ dnl no multi-user mode (daud runs as the one user who exports).
 ac_configure_args="$ac_configure_args --disable-auth --disable-config --disable-multiuser --disable-diodmount"
 AC_CONFIG_SUBDIRS([daud])
 
-AC_CONFIG_FILES([Makefile src/Makefile man/Makefile tests/Makefile systemd/9share.service])
+AC_CONFIG_FILES([Makefile src/Makefile man/Makefile tests/Makefile])
 AC_OUTPUT

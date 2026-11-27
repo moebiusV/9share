@@ -30,6 +30,11 @@
 .B sudo 9share wsl\-boot
 .RB [ \-\-remove ]
 .br
+.B sudo 9share shutdown
+.RB [ \-\-force ]
+.br
+.B sudo 9share restart
+.br
 .B 9share boot
 .RB [ \-\-detach ]
 .br
@@ -93,6 +98,26 @@ or
 .BR "9share off projects" ;
 .B 9share status
 shows what is shared, what is mounted and what is running.
+.PP
+.B sudo 9share shutdown
+stops the daemon
+.RB ( "9share boot" ):
+its relays end, its mounts are taken down, and the exports of each user, which it started, end with it.
+It waits up to 30 seconds (the mounts take time to leave) and says so if the daemon is still there; then either wait and run it again, or use
+.B \-\-force
+to kill it, which can leave a mount or an export behind.  When nothing is running it says so and succeeds.
+Under systemd it stops the 9share service (a signalled process would be started again at once).
+.B sudo 9share restart
+is a shutdown followed by a start, or
+.B systemctl restart
+under systemd.
+The daemon keeps its process number in
+.IR /run/9share.pid ;
+a number in that file is used only if that process really is
+.BR "9share boot" ,
+so a left\-over file never makes
+.B shutdown
+signal something else.
 .SH HOW IT WORKS
 The 9P connection of daud rides a
 .IR "resumable link" :
@@ -102,6 +127,20 @@ the files it has open do not notice.  The mount stays while the connection is do
 .B hold
 time of the share (600 seconds unless the configuration says otherwise).  After that the session is given up, the mount is
 removed, and a new one begins when the exporter is back.
+.SH READING AHEAD
+The kernel sends a read and waits for the answer before it sends the next one, so a program that reads 32 KB at a time gets one round trip's worth of data
+per read: over a link with a round trip of 10 to 25 ms, about 1.3 MB/s, where scp gets more than 30 MB/s over the same ssh, because it keeps up to 64
+requests of 32 KB outstanding.
+.PP
+The relay on the machine that shows the files does the same for 9P.  When a file that was opened read\-only is read in order (the third read in a row
+that goes on from the one before), it asks the exporting side for the next blocks before the kernel does, as many as fit in the window (2 MB: 64 reads of
+32 KB, fewer if the reads are bigger), and answers the kernel's next reads from what has arrived.  A block is used once, and is dropped when the program
+reads somewhere else, when the file is closed, after 3 seconds, and whenever anything is written to the file, or the tree is changed, through this relay.
+.PP
+What this cannot know is a change made on the exporting machine itself: a block read ahead may be older than the file by the time it is used, by as much
+as the 3 seconds it may wait, and only for data past the program's position.  With
+.I /etc/9share/prefetch\-kb
+set to 0 nothing is read ahead and the relay only carries bytes.
 .SH COMMANDS
 .SS Setting up
 .TP
@@ -226,7 +265,7 @@ or to write the service.
 The helper that does this,
 .IR 9share\-init ,
 is installed in the libexec directory of 9share (for the package,
-.IR /usr/lib/9share ),
+.IR /usr/libexec/9share ),
 and can be run again:
 .B "9share\-init detect"
 prints the kind it found;
@@ -279,6 +318,30 @@ On the receiving machine: the unix socket of the relay of a mount.
 .TP
 .I ~/.local/state/9share/NAME/daud.log
 The log of the daud of an export.
+.TP
+.I /etc/9share/prefetch\-kb
+Optional, on the machine that shows the files: one number, how far ahead the relay reads for a file that is read in order, in kilobytes (default 2048,
+0 = not at all).  See
+.BR "READING AHEAD" .
+Read when the mount is made: use
+.B "9share restart"
+to apply a change.
+.TP
+.I /etc/9share/mount\-options
+Optional, on the machine that shows the files: one line of extra options for the kernel's 9p mount.  Letters, digits and
+.B _=,.\-
+only; the options 9share sets itself
+.RB ( trans ,
+.BR rfdno ,
+.BR wfdno ,
+.BR uname ,
+.BR aname ,
+.BR access ,
+.BR version ,
+.BR msize )
+are refused, and so is a file that is not usable (it is then ignored, and the log says so).  Taken when the mount is made.
+.B cache=readahead
+was tried and gave no gain on a 6.12 kernel: the kernel does not keep several reads outstanding by itself, which is what the relay's read-ahead does.
 .TP
 .I /var/log/9share.log
 The log of

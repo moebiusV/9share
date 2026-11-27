@@ -4,7 +4,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=@bindir@/9share boot
+ExecStart=__BINDIR__/9share boot
 Restart=always
 RestartSec=5
 

@@ -82,6 +82,7 @@ check "wsl-boot makes a [boot] command" '[ $rc -eq 0 ] && grep -q "^\[boot\]" "$
 "$BIN" wsl-boot --remove >/dev/null; check "--remove takes it out" '! grep -q 9share "$W"'
 printf '[automount]\nenabled = true\n\n[boot]\ncommand = "service cron start"\n\n[user]\ndefault = alice\n' > "$W"
 "$BIN" wsl-boot > "$T/o"; check "a boot command of the user's is kept and runs first" 'grep -q "kept your boot command" "$T/o" && sed -n 2p "$T/etc/wsl-boot" | grep -qx "service cron start" && grep -q "9share boot --detach" "$T/etc/wsl-boot"'
+check "and there is exactly one command line, the script (a second one is a duplicate key)" '[ "$(grep -c "^command" "$W")" = 1 ] && grep -qx "command = $T/etc/wsl-boot" "$W"'
 check "the rest of wsl.conf is untouched" 'grep -q "^enabled = true" "$W" && grep -q "^default = alice" "$W"'
 "$BIN" wsl-boot --remove >/dev/null; check "--remove puts the user's command back" 'grep -qx "command = \"service cron start\"" "$W" && ! grep -q 9share "$W" && [ ! -e "$T/etc/wsl-boot" ]'
 check "and still the rest is untouched" 'grep -q "^enabled = true" "$W" && grep -q "^default = alice" "$W"'
