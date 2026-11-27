@@ -147,10 +147,15 @@ int cmd_mount(int argc, char **argv)
     char confp[PB], text[3 * P9_LINE], at[P9_LINE];
     struct nineshare_conf c;
     size_t i;
-    if (geteuid() != 0)
+    char accline[40] = "";                          /* the access line, when --access was given: what was chosen stays in the file */
+    if (geteuid() != 0 && !getenv("NINESHARE_SYSCONFDIR"))
         return fail("%s needs root: run it with sudo", "mount");
+    if (argc == 5 && !strcmp(argv[3], "--access") && (!strcmp(argv[4], "owner") || !strcmp(argv[4], "any"))) {
+        snprintf(accline, sizeof accline, "\taccess %s\n", argv[4]);
+        argc = 3;
+    }
     if (argc != 3) {
-        fprintf(stderr, "usage: sudo 9share mount USER NAME DIR\n");
+        fprintf(stderr, "usage: sudo 9share mount USER NAME DIR [--access owner|any]\n");
         return 2;
     }
     if (!nineshare_valid_user(argv[0]) || !getpwnam(argv[0]))
@@ -166,7 +171,7 @@ int cmd_mount(int argc, char **argv)
     if (!nineshare_valid_path(at))
         return fail("%s: the mount point needs an absolute path of letters, digits and . _ + @ - / (no spaces)", at);
     p9_system_conf_path(confp, sizeof confp);
-    if (conf_refused(confp, 0))
+    if (conf_refused(confp, getenv("NINESHARE_SYSCONFDIR") ? (unsigned)getuid() : 0))
         return 1;
     nineshare_conf_init(&c);
     if (p9_file_exists(confp))
@@ -178,7 +183,7 @@ int cmd_mount(int argc, char **argv)
             break;
         }
     nineshare_conf_free(&c);
-    snprintf(text, sizeof text, "mount \"%s\" {\n\tuser \"%s\"\n\tat \"%s\"\n}\n", argv[1], argv[0], at);
+    snprintf(text, sizeof text, "mount \"%s\" {\n\tuser \"%s\"\n\tat \"%s\"\n%s}\n", argv[1], argv[0], at, accline);
     if (p9_block_append(confp, text) < 0)
         return fail("cannot write %s", confp);
     p9_mkdir_p(at, 0755);
@@ -201,7 +206,7 @@ int cmd_unmount(int argc, char **argv)
         return 2;
     }
     p9_system_conf_path(confp, sizeof confp);
-    if (conf_refused(confp, 0))
+    if (conf_refused(confp, getenv("NINESHARE_SYSCONFDIR") ? (unsigned)getuid() : 0))
         return 1;
     nineshare_conf_init(&c);
     if (p9_file_exists(confp))

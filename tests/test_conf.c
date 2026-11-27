@@ -203,11 +203,34 @@ int main(void)
     /* the options of the kernel mount: only the named local account may use it */
     {
         char o[512];
-        p9_kernel_mount_opts(o, sizeof o, 7, "exporter", "/srv/share", 131072, 1234);
+        p9_kernel_mount_opts(o, sizeof o, 7, "exporter", "/srv/share", 131072, 1234, 0);
         CHECK(strstr(o, "access=1234,") != NULL);
         CHECK(strstr(o, "access=any") == NULL && strstr(o, "access=client") == NULL && strstr(o, "access=user") == NULL);
         CHECK(strstr(o, "trans=fd,rfdno=7,wfdno=7,version=9p2000.L,uname=exporter,") == o);
         CHECK(strstr(o, ",aname=/srv/share,msize=131072") != NULL);
+        p9_kernel_mount_opts(o, sizeof o, 7, "exporter", "/srv/share", 131072, 1234, 1);        /* `access any` in the mount block: every local user, on purpose */
+        CHECK(strstr(o, "access=any,") != NULL && strstr(o, "access=1234") == NULL);
+    }
+
+    /* the access setting of a mount block */
+    {
+        struct nineshare_conf ac;
+        char p[600];
+        nineshare_conf_init(&ac);
+        put("access.conf",
+            "mount a {\n user bob\n at /mnt/a\n}\n"
+            "mount b {\n user bob\n at /mnt/b\n access owner\n}\n"
+            "mount c {\n user bob\n at /mnt/c\n access any\n}\n"
+            "mount d {\n user bob\n at /mnt/d\n access all\n}\n"
+            "mount e {\n user bob\n at /mnt/e\n access any\n access owner\n}\n"
+            "mount f {\n user bob\n access any\n at /mnt/f\n hold 30\n}\n", p);
+        nineshare_conf_parse(p, &ac);
+        CHECK(ac.nmounts == 4);                                    /* d (not user or any) and e (twice) are dropped, with a message */
+        CHECK(ac.nmounts == 4 && !strcmp(ac.mounts[0].name, "a") && ac.mounts[0].access == 0);        /* not given: only the user, the default */
+        CHECK(ac.nmounts == 4 && !strcmp(ac.mounts[1].name, "b") && ac.mounts[1].access == 1);
+        CHECK(ac.nmounts == 4 && !strcmp(ac.mounts[2].name, "c") && ac.mounts[2].access == 2);
+        CHECK(ac.nmounts == 4 && !strcmp(ac.mounts[3].name, "f") && ac.mounts[3].access == 2 && ac.mounts[3].hold == 30);   /* in any order, with the others */
+        nineshare_conf_free(&ac);
     }
 
     DONE();

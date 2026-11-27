@@ -19,7 +19,7 @@ language C
 prefix none
 statements
 keywords {
-    export mount directory host user at hold
+    export mount directory host user at hold access
 }
 layout tailq
 ; phrase rules skip `ws` between their elements; character rules never do (defined below)
@@ -58,6 +58,7 @@ mountopts  = | mountopts mountopt
 mountopt   = "user" string
            | "at" string
            | "hold" int
+           | "access" string
 
 ; the checks and the effect of each block, in the order of the file; an error drops the block
 action entry {
@@ -72,7 +73,7 @@ action entry {
             char **dst;
             if (o->exportopt.kind == EXPORTOPT_HOLD) {
                 if (e.hold != 0) { bind_error("each setting may be given once"); goto drop_export; }
-                e.hold = (int)o->exportopt.int_;
+                e.hold = (int)o->exportopt.hyper_int;
                 if (e.hold < 1 || e.hold > 86400) { bind_error("hold is a number of seconds, 1 to 86400"); e.hold = 0; goto drop_export; }
                 continue;
             }
@@ -95,9 +96,16 @@ action entry {
         m.line = n->_line;
         TAILQ_FOREACH(o, &n->mountopts, _link) {
             char **dst;
+            if (o->mountopt.kind == MOUNTOPT_ACCESS) {
+                if (m.access != 0) { bind_error("each setting may be given once"); goto drop_mount; }
+                if (!strcmp(o->mountopt.string, "owner")) m.access = 1;
+                else if (!strcmp(o->mountopt.string, "any")) m.access = 2;
+                else { bind_error("access is owner (only the mount's user may use it) or any (every user of this machine)"); goto drop_mount; }
+                continue;
+            }
             if (o->mountopt.kind == MOUNTOPT_HOLD) {
                 if (m.hold != 0) { bind_error("each setting may be given once"); goto drop_mount; }
-                m.hold = (int)o->mountopt.int_;
+                m.hold = (int)o->mountopt.hyper_int;
                 if (m.hold < 1 || m.hold > 86400) { bind_error("hold is a number of seconds, 1 to 86400"); m.hold = 0; goto drop_mount; }
                 continue;
             }

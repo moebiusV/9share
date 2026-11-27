@@ -10,6 +10,7 @@
 .br
 .B sudo 9share mount
 .I USER NAME DIR
+.RB [ \-\-access\ owner | any ]
 .br
 .B 9share pair
 .RB [ \-\-force ]
@@ -288,7 +289,8 @@ do and undo it.  See
 .BR 9share\-init (8).
 .SH SECURITY
 Mounts are made nosuid,nodev, with access=UID, UID being the account named in the mount block: the kernel refuses every other user of the
-receiving machine, root included, so only that account (and whoever can become it) can use the files.  They are served with the exporting
+receiving machine, root included, so only that account (and whoever can become it) can use the files.  To open a mount to every local user on purpose,
+put \fBaccess any\fR in its block (or give \fB\-\-access any\fR to \fB9share mount\fR): that is for the administrator, and the file must be root's.  They are served with the exporting
 user's rights: export only what that account may see.  The configuration files are used only if no one but their owner (or root) could have changed them: see
 .BR 9share.conf (5).
 The receiving machine mounts only over a connection that the relay of the mount's user

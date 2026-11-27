@@ -452,9 +452,14 @@ int p9_conf_trust(const char *path, unsigned owner, char *why, size_t wn)
     return 0;
 }
 
-void p9_kernel_mount_opts(char *buf, size_t n, int kfd, const char *uname, const char *aname, unsigned msize, unsigned access_uid)
+void p9_kernel_mount_opts(char *buf, size_t n, int kfd, const char *uname, const char *aname, unsigned msize, unsigned access_uid, int any_user)
 {
-    snprintf(buf, n, "trans=fd,rfdno=%d,wfdno=%d,version=9p2000.L,uname=%s,access=%u,aname=%s,msize=%u", kfd, kfd, uname, access_uid, aname, msize);
+    char acc[16];
+    if (any_user)
+        snprintf(acc, sizeof acc, "any");
+    else
+        snprintf(acc, sizeof acc, "%u", access_uid);
+    snprintf(buf, n, "trans=fd,rfdno=%d,wfdno=%d,version=9p2000.L,uname=%s,access=%s,aname=%s,msize=%u", kfd, kfd, uname, acc, aname, msize);
 }
 
 int p9_prefetch_kb(int *kb)

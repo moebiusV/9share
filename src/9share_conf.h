@@ -17,10 +17,11 @@ struct nineshare_export {
     size_t  line;                       /* the line of the file the block starts on */
 };
 
-/* mount "NAME" { user USER  at MOUNTPOINT  [hold SECONDS] } */
+/* mount "NAME" { user USER  at MOUNTPOINT  [hold SECONDS]  [access owner|any] } */
 struct nineshare_mount {
     char   *name, *user, *at;
     int     hold;                       /* 0: the default, 600 */
+    int     access;                     /* 0 or 1: only USER may use the mount (the default); 2: every user of this machine */
     size_t  line;
 };
 

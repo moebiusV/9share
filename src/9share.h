@@ -53,8 +53,9 @@ int   p9_prefetch_kb(int *kb);
  * says in one line what is wrong and what to do). */
 int   p9_conf_trust(const char *path, unsigned owner, char *why, size_t wn);
 /* The options of the kernel's 9p mount.  ACCESS_UID is the account on THIS machine that may use the mount: access=UID makes the kernel refuse every other
- * user, root included (diod's own manual calls this its single-user mode; access=any lets every local user in, with the exporting user's rights). */
-void  p9_kernel_mount_opts(char *buf, size_t n, int kfd, const char *uname, const char *aname, unsigned msize, unsigned access_uid);
+ * user, root included (diod's own manual calls this its single-user mode); ANY_USER (a mount block's `access any`) makes it access=any, which lets every
+ * local user in, with the exporting user's rights. */
+void  p9_kernel_mount_opts(char *buf, size_t n, int kfd, const char *uname, const char *aname, unsigned msize, unsigned access_uid, int any_user);
 /* Run argv; its standard output (up to outsz-1 bytes) goes to OUT if given.  Returns the exit status,
  * 124 after TIMEOUT seconds (the child is killed), -1 if it cannot be run. */
 int   p9_run(char *const argv[], int timeout, char *out, size_t outsz);

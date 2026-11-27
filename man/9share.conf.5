@@ -65,6 +65,19 @@ Required.
 .TP
 .B at
 The mount point: an absolute path of letters, digits and . _ + @ \- / (no spaces), created if it is missing.  Required.
+.TP
+.B access
+Who on this machine may use the mount: \fBowner\fR (the default) lets only the account named by
+.BR user ,
+and the kernel refuses everyone else, root included; \fBany\fR lets every user of this machine in, with the exporting user's rights (the files' own
+modes still apply, so what group and others may do depends on them).  Opening a mount to everyone is a decision of the machine's administrator, which
+is why it is made here, in a file that must be owned by root and not writable by anyone else (see
+.BR PERMISSIONS ),
+and not by the exporter.  To let only a group in, use
+.B any
+and put the mount point where only that group can reach it: in a directory whose group is the one you mean and whose mode is 0750, for example
+.IR /srv/team/projects .
+(The mode and owner of the mount point itself do not matter once something is mounted on it: what you see are the files' own.)
 .PP
 Both blocks take one more setting:
 .TP

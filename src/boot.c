@@ -215,8 +215,9 @@ static void mounter_start(struct mstate *ms, const struct nineshare_mount *m, co
         return;
     }
     p9_mkdir_p(m->at, 0755);
-    /* access=UID: only this account may use the mount; the kernel refuses every other local user (and root: nothing here needs root to open the files) */
-    p9_kernel_mount_opts(opts, sizeof opts, ms->kfd, uname, aname, NINESHARE_MSIZE, (unsigned)pw->pw_uid);
+    /* access=UID: only this account may use the mount; the kernel refuses every other local user (and root: nothing here needs root to open the files).
+     * `access any` in the mount block, which only root can write (see p9_conf_trust), opens it to every local user on purpose. */
+    p9_kernel_mount_opts(opts, sizeof opts, ms->kfd, uname, aname, NINESHARE_MSIZE, (unsigned)pw->pw_uid, m->access == 2);
     if (p9_mount_options(extra, sizeof extra) < 0)
         syslog(LOG_WARNING, "%s/mount-options is not usable (see 9share(8)): ignored", p9_sysconf_dir());
     if (extra[0])

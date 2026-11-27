@@ -21,6 +21,8 @@ The parser of 9share.conf
     3. build hbnf (git clone https://github.com/moebiusV/hbnf; gprbuild -P hbnf.gpr; on a system without the static Ada runtime
        link it dynamically by removing "-static" from a copy of hbnf.gpr) and run
            HBNF=/path/to/hbnf/hbnf HBNF_TEMPLATES=/path/to/hbnf/templates tools/regen-conf.sh
+       (hbnf 0.8 also needs its layouts/ directory beside templates/; a binary that is not in a git checkout, such as an unpacked static
+        package, needs HBNF_REV=<its short revision> too, because regen-conf.sh writes the revision into the header.)
     4. commit the grammar and the regenerated file together.
   src/hbnf_conf.c and hbnf_conf.h are copied unchanged from hbnf's runtime/; copy them again when you regenerate with a newer hbnf.
 

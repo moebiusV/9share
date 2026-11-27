@@ -1,3 +1,12 @@
+9share (0.1.0-11) unstable; urgency=medium
+
+  * A mount block takes `access owner|any` (and `9share mount ... --access owner|any` writes it): owner, the default, lets only the mount's user use the
+    mount (access=UID); any lets every user of the machine in (access=any), a decision for the administrator that is made in a file that must be root's.
+    The config parser is regenerated with hbnf c699e82 (a static build made on another machine), which names the number field hyper_int and refuses
+    overlong and surrogate UTF-8; the two actions of the grammar that used the old name are changed.  Tests: test_conf.c, test_mountaccess.sh.
+
+ -- David Walther <david@clearbrookdistillery.com>  Fri, 27 Nov 2026 10:00:00 -0700
+
 9share (0.1.0-10) unstable; urgency=medium
 
   * Only the account named in `9share mount` can use a mount: the kernel mount is made with access=UID, that account's uid (it was access=any: every local
