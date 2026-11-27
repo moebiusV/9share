@@ -1,3 +1,16 @@
+9share (0.1.0-12) unstable; urgency=medium
+
+  * daud no longer dies when a Tclunk of a fid arrives while reads of the same fid are still being served.  The pool of threads ran the two at the same
+    moment; the clunk closed the file and set the fid's io context to NULL, and the read, which had checked it a moment before, died with a SIGSEGV in
+    pread (fault address 0x2c, the offset of the descriptor in the context).  The read-ahead makes this common: the relay has reads in flight when the
+    kernel clunks the fid.  The fix is in libnpfs: every request holds a per-fid lock, shared for most and exclusive for Tclunk and Tremove, so a clunk
+    waits for the requests already running on the fid and the ones after it find it closed (EBADF); the lock prefers a waiting clunk to later readers.
+  * This was the "resume failure" seen after the benchmark: not the link (it answered a new session that replaced a live one with RESET, as designed) but
+    daud, which had crashed and was started again by 9share serve three seconds later, as a new session.
+  * Test: test_clunk_race.c sends 8 reads and the clunk of their fid in one write, 4000 times; the unfixed daud was killed by it on every run, within 27 rounds.
+
+ -- David Walther <david@clearbrookdistillery.com>  Fri, 27 Nov 2026 12:00:00 -0700
+
 9share (0.1.0-11) unstable; urgency=medium
 
   * A mount block takes `access owner|any` (and `9share mount ... --access owner|any` writes it): owner, the default, lets only the mount's user use the

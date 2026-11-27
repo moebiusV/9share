@@ -569,7 +569,16 @@ np_process_request(Npreq *req, Nptpool *tp)
 	Npfcall *rc = NULL;
 	Npfcall *tc = req->tcall;
 	u64 rbytes = 0, wbytes = 0;
+	Npfid *opfid = req->fid;       /* the request holds a reference to it for as long as it runs; np_clunk and np_remove drop the pool's own */
+	int excl = tc->type == Tclunk || tc->type == Tremove;
 
+	/* One request at a time may close what a fid has open, and not while others are using it. */
+	if (opfid) {
+		if (excl)
+			pthread_rwlock_wrlock (&opfid->oplock);
+		else
+			pthread_rwlock_rdlock (&opfid->oplock);
+	}
 	np_uerror(0);
 	switch (tc->type) {
 		case Tstatfs:
@@ -664,6 +673,8 @@ np_process_request(Npreq *req, Nptpool *tp)
 			NP_ASSERT (0); /* handled in np_deserialize */
 			break;
 	}
+	if (opfid)
+		pthread_rwlock_unlock (&opfid->oplock);
 
 	/* update stats */
 	xpthread_mutex_lock (&tp->srv->lock);

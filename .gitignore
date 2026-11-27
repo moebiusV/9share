@@ -33,6 +33,7 @@ Makefile.in
 # built test programs
 /tests/test_proxy
 /tests/test_daud_shutdown
+/tests/test_clunk_race
 
 # the working notes of whoever is developing here (names of their machines, their tools): never committed
 /HANDOFF.md

@@ -60,6 +60,7 @@ _destroy_fid (Npfid *f)
 	if (f->aname)
 		free (f->aname);
 	pthread_mutex_destroy (&f->lock);
+	pthread_rwlock_destroy (&f->oplock);
 	f->magic = FID_MAGIC_FREED;
 	free(f);
 
@@ -76,6 +77,15 @@ _create_fid (Npconn *conn, u32 fid)
 		f->conn = conn;
 		f->fid = fid;
 		pthread_mutex_init (&f->lock, NULL);
+		{   /* a waiting clunk goes before readers that arrive later, or a stream of reads could keep it waiting for ever */
+			pthread_rwlockattr_t a;
+			pthread_rwlockattr_init (&a);
+#if defined(__GLIBC__) && defined(_GNU_SOURCE)   /* glibc names its kinds in an enum, so there is no macro to test for */
+			pthread_rwlockattr_setkind_np (&a, PTHREAD_RWLOCK_PREFER_WRITER_NONRECURSIVE_NP);
+#endif
+			pthread_rwlock_init (&f->oplock, &a);
+			pthread_rwlockattr_destroy (&a);
+		}
 		f->magic = FID_MAGIC;
 	} else
 		np_uerror (ENOMEM);

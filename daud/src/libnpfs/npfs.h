@@ -105,6 +105,11 @@ struct Npfcall {
 struct Npfid {
 	int		magic;
 	pthread_mutex_t lock;
+	/* Held shared by every request that works on the fid and exclusively by Tclunk and Tremove, so that the clunk,
+	 * which closes what the fid has open, waits for the requests already running on it, and the ones that come later
+	 * find it closed.  (Without it a Tread and a Tclunk of the same fid, which the pool of threads runs at the same time,
+	 * could meet: the read used the file the clunk had just closed.)  Taken before any other lock; see np_process_request. */
+	pthread_rwlock_t oplock;
 	Npconn*		conn;
 	u32		fid;
 	int		refcount;
