@@ -16,4 +16,4 @@ TESTS_ENVIRONMENT = NINESHARE_DAUD=$(abs_top_builddir)/daud/src/cmd/daud NINESHA
                     NINESHARE_SRCDIR=$(abs_top_srcdir) NINESHARE_INIT=$(abs_top_srcdir)/tools/9share-init NINESHARE_SETUP=$(abs_top_srcdir)/tools/9share-setup \
                     NINESHARE_UNIT=$(abs_top_builddir)/systemd/9share.service
 
-EXTRA_DIST = test_resume_scram.sh test_serve.sh test_pair.sh test_init.sh test_setup.sh test_unit.sh test_shutdown.sh test_readahead.sh test_confperm.sh test_clean.sh
+EXTRA_DIST = test_resume_scram.sh test_serve.sh test_pair.sh test_init.sh test_setup.sh test_unit.sh test_shutdown.sh test_readahead.sh test_confperm.sh test_clean.sh test_mountaccess.sh
