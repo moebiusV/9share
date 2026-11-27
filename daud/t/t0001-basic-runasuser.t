@@ -32,8 +32,8 @@ test_expect_success STAT 'permissions on unix domain socket are ok' '
 	drwxr-xr-x
 	srw-rw-rw-
 	EOT
-	$PATH_STAT -c "%A" $(dirname $DIOD_SOCKET) >stat.out &&
-	$PATH_STAT -c "%A" $DIOD_SOCKET >>stat.out &&
+	stat -c "%A" $(dirname $DIOD_SOCKET) >stat.out &&
+	stat -c "%A" $DIOD_SOCKET >>stat.out &&
 	test_cmp stat.exp stat.out
 '
 
@@ -54,11 +54,25 @@ test_expect_success 'copy ctl:/zero to ctl:null' '
 # implemented directly in libnpfs, bypassing diod_ops.c, where op_attach()
 # gates access to all other exports.
 test_expect_success SUDO 'the root user can access ctl:/version' '
-	$SUDO -E $PATH_DIODCLI --aname=ctl read version
+	$SUDO $PATH_DIODCLI --server=$DIOD_SOCKET --aname=ctl read version
 '
 
 test_expect_success NOBODY 'the nobody user can access ctl:/version' '
-	$SUDO -E -u nobody $PATH_DIODCLI --aname=ctl read version
+	$SUDO -u nobody $PATH_DIODCLI --server=$DIOD_SOCKET \
+	    --aname=ctl read version
+'
+
+# A UNIX domain socket client is identified by the server's hostname,
+# truncated at the first dot unless --long.
+test_expect_success 'showmount lists the client host' '
+	hostname | cut -d. -f1 >showmount.exp &&
+	$PATH_DIODCLI showmount >showmount.out &&
+	test_cmp showmount.exp showmount.out
+'
+test_expect_success 'showmount --long lists the client host' '
+	hostname >showmount-long.exp &&
+	$PATH_DIODCLI showmount --long >showmount-long.out &&
+	test_cmp showmount-long.exp showmount-long.out
 '
 
 test_expect_success 'ls net:/ shows test files' '
@@ -87,16 +101,17 @@ test_expect_success 'cat net:/1/c produced test file content' '
 '
 
 test_expect_success SUDO 'cat net:/1/c fails as root' '
-	test_must_fail $SUDO -E \
-	    $PATH_DIODCLI --aname=$exportdir read /1/c 2>rootcat.err &&
-	grep "Operation not permitted" rootcat.err
+	test_must_fail $SUDO \
+	    $PATH_DIODCLI --server=$DIOD_SOCKET \
+	        --aname=$exportdir read /1/c 2>rootcat.err &&
+	test_grep "Operation not permitted" rootcat.err
 '
 
 test_expect_success NOBODY 'cat net:/1/c fails as nobody' '
-	test_must_fail $SUDO -E -u nobody \
-	    $PATH_DIODCLI --aname=$exportdir read /1/c \
+	test_must_fail $SUDO -u nobody \
+	    $PATH_DIODCLI --server=$DIOD_SOCKET --aname=$exportdir read /1/c \
 	        2>nobodycat.err &&
-	grep "Operation not permitted" nobodycat.err
+	test_grep "Operation not permitted" nobodycat.err
 '
 
 test_expect_success 'stop diod' '

@@ -4,7 +4,7 @@ AM_CPPFLAGS = \
 	-I$(top_srcdir) \
 	$(MUNGE_CFLAGS) \
 	$(CAP_CFLAGS) \
-	$(LUA_INCLUDE)
+	$(LUA_CFLAGS)
 
 noinst_LIBRARIES = libdiod.a
 
@@ -40,10 +40,11 @@ test_ldadd = \
 	$(builddir)/libdiod.a \
 	$(top_builddir)/src/libnpclient/libnpclient.a \
 	$(top_builddir)/src/libnpfs/libnpfs.a \
+	$(top_builddir)/src/libhostlist/libhostlist.a \
 	$(top_builddir)/src/liblsd/liblsd.a \
 	$(builddir)/libdiod.a \
 	$(top_builddir)/src/libtap/libtap.a \
-	$(LUA_LIB) \
+	$(LUA_LIBS) \
 	$(CAP_LIBS) \
 	$(MUNGE_LIBS) \
 	$(LIBPTHREAD)
@@ -52,8 +53,11 @@ TESTS = \
 	test_configfile.t \
 	test_read.t \
 	test_directory.t \
+	test_rename.t \
+	test_stream.t \
 	test_lock.t \
-	test_multiuser.t
+	test_multiuser.t \
+	test_fcrdns.t
 
 check_PROGRAMS = $(TESTS)
 TEST_EXTENSIONS = .t
@@ -69,8 +73,17 @@ test_read_t_LDADD = $(test_ldadd)
 test_directory_t_SOURCES = test/directory.c
 test_directory_t_LDADD = $(test_ldadd)
 
+test_rename_t_SOURCES = test/rename.c
+test_rename_t_LDADD = $(test_ldadd)
+
+test_stream_t_SOURCES = test/stream.c
+test_stream_t_LDADD = $(test_ldadd)
+
 test_lock_t_SOURCES = test/lock.c
 test_lock_t_LDADD = $(test_ldadd)
 
 test_multiuser_t_SOURCES = test/multiuser.c
 test_multiuser_t_LDADD = $(test_ldadd)
+
+test_fcrdns_t_SOURCES = test/fcrdns.c
+test_fcrdns_t_LDADD = $(test_ldadd)

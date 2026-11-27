@@ -36,7 +36,6 @@
 #include "src/libnpfs/xpthread.h"
 #include "src/liblsd/list.h"
 #include "src/liblsd/hash.h"
-#include "src/liblsd/hostlist.h"
 
 #include "diod_conf.h"
 #include "diod_log.h"
@@ -56,8 +55,12 @@ diod_fidalloc (Npfid *fid, Npstr *ns)
         f->flags = 0;
         f->ioctx = NULL;
         f->xattr = NULL;
+        f->stream_offset = 0;
+        f->stream_busy = 0;
+        pthread_mutex_init (&f->lock, NULL);
         f->path = path_create (fid->conn->srv, ns);
         if (!f->path) {
+            pthread_mutex_destroy (&f->lock);
             free (f);
             f = NULL;
         }
@@ -80,6 +83,9 @@ diod_fidclone (Npfid *newfid, Npfid *fid)
         nf->flags = f->flags;
         nf->ioctx = NULL;
         nf->xattr = NULL;
+        nf->stream_offset = 0;
+        nf->stream_busy = 0;
+        pthread_mutex_init (&nf->lock, NULL);
         nf->path = path_incref (f->path);
     }
     newfid->aux = nf;
@@ -102,6 +108,7 @@ diod_fiddestroy (Npfid *fid)
             xattr_close (fid);
         if (f->path)
             path_decref (fid->conn->srv, f->path);
+        pthread_mutex_destroy (&f->lock);
         free(f);
         fid->aux = NULL;
     }

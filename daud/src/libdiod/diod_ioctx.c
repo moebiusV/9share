@@ -17,6 +17,7 @@
 #include <string.h>
 #include <inttypes.h>
 #include <stdint.h>
+#include <limits.h>
 #include <pthread.h>
 #include <errno.h>
 #include <sys/types.h>
@@ -34,7 +35,6 @@
 #include "src/libnpfs/npfs.h"
 #include "src/liblsd/list.h"
 #include "src/liblsd/hash.h"
-#include "src/liblsd/hostlist.h"
 #include "src/libnpfs/xpthread.h"
 
 #include "diod_conf.h"
@@ -255,6 +255,18 @@ ioctx_pread (IOCtx ioctx, void *buf, size_t count, off_t offset)
 }
 
 int
+ioctx_read (IOCtx ioctx, void *buf, size_t count)
+{
+    return read (ioctx->fd, buf, count);
+}
+
+int
+ioctx_write (IOCtx ioctx, const void *buf, size_t count)
+{
+    return write (ioctx->fd, buf, count);
+}
+
+int
 ioctx_pwrite (IOCtx ioctx, const void *buf, size_t count, off_t offset)
 {
     return pwrite (ioctx->fd, buf, count, offset);
@@ -306,21 +318,29 @@ ioctx_rewinddir (IOCtx ioctx)
         rewinddir (ioctx->dir);
 }
 
-void
-ioctx_seekdir (IOCtx ioctx, long offset)
+/* seekdir(3) takes a long, which is 32 bits on some systems.  Fail rather
+ * than seek to a truncated offset.
+ */
+int
+ioctx_seekdir (IOCtx ioctx, u64 offset)
 {
+    if (offset > LONG_MAX) {
+        errno = EINVAL;
+        return -1;
+    }
     if (ioctx->dir)
-        seekdir (ioctx->dir, offset);
+        seekdir (ioctx->dir, (long)offset);
+    return 0;
 }
 
-/* Modern readdir() is thread-safe, however, if d->off_t is not available,
+/* Modern readdir() is thread-safe, however, if d_off is not available,
  * take a lock over readdir() + telldir() so that if there are two threads
  * walking the directory, telldir() returns the offset after this readdir()
- * and not that of a racing thread.  If d->off_t is available, we can avoid
+ * and not that of a racing thread.  If d_off is available, we can avoid
  * taking the lock.
  */
 struct dirent *
-ioctx_readdir(IOCtx ioctx, long *offset)
+ioctx_readdir(IOCtx ioctx, u64 *offset)
 {
     struct dirent *d;
 
@@ -328,19 +348,13 @@ ioctx_readdir(IOCtx ioctx, long *offset)
         errno = EINVAL;
         return NULL;
     }
-#ifndef _DIRENT_HAVE_D_OFF
-    xpthread_mutex_lock (&ioctx->lock);
-#endif
-    if (!(d = readdir (ioctx->dir)))
-        goto done;
-#ifndef _DIRENT_HAVE_D_OFF
-    *offset = telldir (ioctx->dir);
+#ifdef _DIRENT_HAVE_D_OFF
+    if ((d = readdir (ioctx->dir)))
+        *offset = d->d_off;
 #else
-    *offset = d->d_off;
-#endif
-    xpthread_mutex_unlock (&ioctx->lock);
-done:
-#ifndef _DIRENT_HAVE_D_OFF
+    xpthread_mutex_lock (&ioctx->lock);
+    if ((d = readdir (ioctx->dir)))
+        *offset = telldir (ioctx->dir);
     xpthread_mutex_unlock (&ioctx->lock);
 #endif
     return d;

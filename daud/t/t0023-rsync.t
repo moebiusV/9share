@@ -22,7 +22,11 @@ if ! test_have_prereq MULTIUSER; then
 	skip_all='diod was configured with --disable-multiuser'
 	test_done
 fi
-if ! PATH_RSYNC=$(which rsync 2>/dev/null); then
+if ! test_have_prereq DIODMOUNT; then
+	skip_all='diod was configured with --disable-diodmount'
+	test_done
+fi
+if ! which rsync >/dev/null 2>&1; then
 	skip_all='rsync is not installed'
 	test_done
 fi
@@ -35,7 +39,7 @@ test_under_diod unixsocketroot \
 
 # gnome probes for .Trash, autorun.inf, etc asynchronously on new mounts,
 # causing umount to fail with EBUSY if still in progress.  Therefore --lazy.
-umountcmd="$SUDO umount --lazy"
+umountcmd="$SUDO umount -l"
 
 test_expect_success 'create export/mount directories' '
 	mkdir -p exp mnt
@@ -48,14 +52,14 @@ test_expect_success 'mount filesystem with access=client' '
 '
 test_expect_success 'rsync /etc to mnt/etc' '
 	mkdir -p mnt/etc &&
-	$SUDO $PATH_RSYNC -av /etc mnt/etc/ 2>&1 >rsync.out
+	$SUDO rsync -av /etc mnt/etc/ 2>&1 >rsync.out
 '
 test_expect_success 'rsync /etc to mnt/etc again should be silent' '
-	$SUDO $PATH_RSYNC -avc /etc mnt/etc/ 2>&1 >rsync2.out &&
+	$SUDO rsync -avc /etc mnt/etc/ 2>&1 >rsync2.out &&
 	test_must_fail grep etc/ rsync2.out
 '
 test_expect_success 'rsync /etc to exp/etc should be silent' '
-	$SUDO $PATH_RSYNC -avc /etc exp/etc/ 2>&1 >rsync3.out &&
+	$SUDO rsync -avc /etc exp/etc/ 2>&1 >rsync3.out &&
 	test_must_fail grep etc/ rsync3.out
 '
 test_expect_success 'unmount mnt' '

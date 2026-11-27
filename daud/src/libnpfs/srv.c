@@ -71,6 +71,12 @@ np_srv_create(int nwthread, int flags)
 		goto error;
 	np_tpool_incref (srv->tpool);
 	np_assert_srv = srv;
+	if ((flags & SRV_FLAGS_DEBUG_9PTRACE)) {
+		pthread_mutex_init (&srv->tracebuf_lock, NULL);
+		srv->tracebuf_size = 1048576;
+		if (!(srv->tracebuf = calloc (1, srv->tracebuf_size)))
+			goto error;
+	}
 	return srv;
 error:
 	if (srv)
@@ -103,6 +109,7 @@ np_srv_destroy(Npsrv *srv)
 	np_usercache_destroy (srv);
 	np_ctl_finalize (srv);
 	np_assert_srv = NULL;
+	free (srv->tracebuf);
 	free (srv);
 }
 
@@ -499,10 +506,10 @@ np_preprocess_request(Npreq *req)
 			req->fid->aname = np_strdup (&tc->u.tattach.aname);
 			if (!req->fid->aname)
 				np_fid_decref (&req->fid);
-			/* Here we select the tpool that will handle this
-			 * request and requests on fids walked from this fid.
+			/* The attach itself runs in the default tpool.  The
+			 * tpool for this fid, and the fids walked from it, is
+			 * selected in np_attach() once the attach succeeds.
 			 */
-			np_tpool_select (req);
 			break;
 		case Tflush:
 			break;
@@ -883,10 +890,13 @@ void
 np_logmsg(Npsrv *srv, const char *fmt, ...)
 {
 	va_list ap;
+	char buf[1024];
 
 	va_start (ap, fmt);
-	if (srv->logmsg)
-		srv->logmsg (fmt, ap);
+	if (srv->logmsg) {
+		(void)vsnprintf (buf, sizeof (buf), fmt, ap);
+		srv->logmsg (buf);
+	}
 	va_end (ap);
 }
 

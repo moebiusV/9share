@@ -1,3 +1,8 @@
+# diod refuses a config file that group or other can write, so make
+# sure files the tests create are not group writable even if the
+# user's umask is 002.
+umask 022
+
 PATH_DIOD=$SHARNESS_BUILD_DIRECTORY/src/cmd/daud
 PATH_MOUNT_DIOD=$SHARNESS_BUILD_DIRECTORY/src/cmd/mount.diod
 PATH_DIODRUN=$SHARNESS_BUILD_DIRECTORY/src/cmd/test_diodrun
@@ -7,7 +12,8 @@ PATH_DIODCLI=$SHARNESS_BUILD_DIRECTORY/src/cmd/diodcli
 # Set test prerequisites
 #
 # DIODMOUNT     mount.diod build was not suppressed
-# NOBODY        sudo -u nobody works
+# NOBODY        sudo -u nobody works and nobody can execute diodcli
+#               (e.g. the build tree is not under a 0700 home directory)
 #
 # CONFIG        diod has config file support
 # GANESHA-KMOD  ganesha support was built
@@ -17,6 +23,11 @@ PATH_DIODCLI=$SHARNESS_BUILD_DIRECTORY/src/cmd/diodcli
 # V9FS_CLIENT   9p linux filesystem is available
 # STAT          stat(1) is available
 # FLOCK		flock(1) is available
+# VSOCK		kernel vsock loopback transport works
+# SYSPACKAGE    an installed diod package runs under systemd with
+#               /etc/diod.conf identical to t/etc/syspackage.conf
+# MOUNT_NOSTAT  mount(8) does not stat a mount after making it, so it
+#               can mount a 9p file system that excludes root (#181)
 #
 ##
 get_buildopts() {
@@ -30,7 +41,7 @@ if test -x $PATH_MOUNT_DIOD; then
 	test_set_prereq DIODMOUNT
 fi
 if test_have_prereq SUDO; then
-	if $SUDO -u nobody true 2>/dev/null; then
+	if $SUDO -u nobody test -x $PATH_DIODCLI 2>/dev/null; then
 		test_set_prereq NOBODY
 	fi
 fi
@@ -41,12 +52,46 @@ if test_have_prereq SUDO; then
 		*) test_set_prereq V9FS_CLIENT ;;
 	esac
 fi
-if PATH_STAT=$(which stat) >/dev/null; then
+if which stat >/dev/null 2>&1; then
 	test_set_prereq STAT
 fi
-if PATH_FLOCK=$(which flock) >/dev/null; then
+if which flock >/dev/null 2>&1; then
 	test_set_prereq FLOCK
 fi
+test_set_mount_nostat_prereq
+
+# Set VSOCK if the kernel has a working vsock loopback transport.
+# Check with a standalone helper rather than diod itself, and rather than
+# assuming from the presence of /dev/vsock, which does not imply loopback.
+if $SHARNESS_BUILD_DIRECTORY/src/cmd/test_vsockcheck 2>/dev/null; then
+	test_set_prereq VSOCK
+fi
+
+# Set SYSPACKAGE only if /etc/diod.conf is the test config.  Tests that
+# use it run against the installed server, so this keeps them from ever
+# touching a real one.
+if cmp -s /etc/diod.conf $SHARNESS_TEST_SRCDIR/etc/syspackage.conf \
+    && test -x /usr/sbin/diod \
+    && systemctl is-active -q diod 2>/dev/null; then
+	test_set_prereq SYSPACKAGE
+fi
+
+# Report the mount(8) and kernel 9p details that a v9fs test failure may
+# turn on, once per run.  mount(8) does not say which of these is
+# responsible when a mount fails.
+report_9p_environment() {
+	# test_report_kernel_config() reports once per run and says so in
+	# its return status, which gates the rest.
+	test_report_kernel_config '9P*' 'NET_9P*' || return 0
+
+	say "mount: $(mount --version 2>/dev/null | head -1)"
+	if grep -qw 9p /proc/filesystems 2>/dev/null; then
+		say "9p: registered in /proc/filesystems"
+	else
+		say "9p: not registered in /proc/filesystems"
+	fi
+}
+report_9p_environment
 
 # Usage: waitsock sockpath [retries]
 waitsock() {
@@ -122,7 +167,9 @@ test_under_diod() {
 	unixsocket)
 		;;
 	unixsocketroot)
-		diodsudo="$SUDO"
+		#  MALLOC_CHECK_ is exported below, but sudo does not
+		#  preserve the environment, so pass it explicitly.
+		diodsudo="$SUDO MALLOC_CHECK_=3"
 		;;
 	*)
 		error "unknown test method $method"
@@ -130,7 +177,14 @@ test_under_diod() {
 	esac
 	log_file="$SHARNESS_TEST_NAME.diod.log"
 	if test -n "$TEST_UNDER_DIOD_ACTIVE"; then
-		test "$debug" = "t" || cleanup rm -f "${SHARNESS_TEST_DIRECTORY:-..}/$log_file"
+		# Keep the server log if the test failed so that CI can
+		# capture the 9P protocol trace.  $test_failure is escaped
+		# so it is evaluated by test_done(), not here.  Use if/fi
+		# rather than && so that a failed test does not alter the
+		# exit status cleanup() preserves.
+		log_path="${SHARNESS_TEST_DIRECTORY:-..}/$log_file"
+		test "$debug" = "t" \
+		    || cleanup "if test \$test_failure -eq 0; then rm -f '$log_path'; fi"
 		return
 	fi
 	if test "$verbose" = "t"; then

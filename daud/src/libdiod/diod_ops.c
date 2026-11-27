@@ -94,7 +94,6 @@
 #include "src/libnpfs/xpthread.h"
 #include "src/liblsd/list.h"
 #include "src/liblsd/hash.h"
-#include "src/liblsd/hostlist.h"
 
 #include "diod_conf.h"
 #include "diod_log.h"
@@ -159,7 +158,7 @@ diod_init (Npsrv *srv)
 {
     srv->msize = DIOD_SRV_MAX_MSIZE;
     srv->fiddestroy = diod_fiddestroy;
-    srv->logmsg = diod_log_msg;
+    srv->logmsg = diod_log_buf;
     srv->remapuser = diod_remapuser;
     srv->exportok = diod_exportok;
     srv->auth_required = diod_auth_required;
@@ -218,11 +217,12 @@ diod_ustat2qid (struct stat *st, Npqid *qid)
     qid->path = st->st_ino;
     //qid->version = st->st_mtime ^ (st->st_size << 8);
     qid->version = 0;
-    qid->type = 0;
     if (S_ISDIR(st->st_mode))
-        qid->type |= Qtdir;
-    if (S_ISLNK(st->st_mode))
-        qid->type |= Qtsymlink;
+        qid->type = Qtdir;
+    else if (S_ISLNK(st->st_mode))
+        qid->type = Qtsymlink;
+    else
+        qid->type = Qtfile;
 }
 
 static void
@@ -231,11 +231,12 @@ _dirent2qid (struct dirent *d, Npqid *qid)
     NP_ASSERT (d->d_type != DT_UNKNOWN);
     qid->path = d->d_ino;
     qid->version = 0;
-    qid->type = 0;
     if (d->d_type == DT_DIR)
-        qid->type |= Qtdir;
-    if (d->d_type == DT_LNK)
-        qid->type |= Qtsymlink;
+        qid->type = Qtdir;
+    else if (d->d_type == DT_LNK)
+        qid->type = Qtsymlink;
+    else
+        qid->type = Qtfile;
 }
 
 int
@@ -460,6 +461,74 @@ error_quiet:
     return 0;
 }
 
+/* Some files, such as relayfs or tracefs trace_pipe, are opened with
+ * nonseekable_open() or stream_open() and reject pread/pwrite with ESPIPE.
+ * 9P has no unpositioned read or write, so emulate one: if the requested
+ * offset is where the previous stream I/O on this fid left off, use
+ * read/write.  Any other offset fails with ESPIPE, as it would locally.
+ * Reads and writes share one offset, as they share one file position on
+ * the client.
+ *
+ * Stream I/O may block indefinitely, so the fid lock is not held across
+ * it.  Instead, a request that arrives while another is in progress on
+ * the same fid fails with ESPIPE.  That is not a normal v9fs workload:
+ * the client kernel serializes read(2) and write(2) on an open file, so
+ * overlapping requests on one fid come only from concurrent pread(2) or
+ * pwrite(2), which fail with ESPIPE on a local stream file too.
+ */
+static int
+_stream_begin (Fid *f, u64 offset)
+{
+    int rc = 0;
+
+    xpthread_mutex_lock (&f->lock);
+    if (f->stream_busy || offset != f->stream_offset) {
+        errno = ESPIPE;
+        rc = -1;
+    }
+    else
+        f->stream_busy = 1;
+    xpthread_mutex_unlock (&f->lock);
+    return rc;
+}
+
+static void
+_stream_end (Fid *f, ssize_t n)
+{
+    int saved_errno = errno;
+
+    xpthread_mutex_lock (&f->lock);
+    if (n > 0)
+        f->stream_offset += n;
+    f->stream_busy = 0;
+    xpthread_mutex_unlock (&f->lock);
+    errno = saved_errno;
+}
+
+static ssize_t
+_stream_read (Fid *f, void *buf, u32 count, u64 offset)
+{
+    ssize_t n;
+
+    if (_stream_begin (f, offset) < 0)
+        return -1;
+    n = ioctx_read (f->ioctx, buf, count);
+    _stream_end (f, n);
+    return n;
+}
+
+static ssize_t
+_stream_write (Fid *f, void *buf, u32 count, u64 offset)
+{
+    ssize_t n;
+
+    if (_stream_begin (f, offset) < 0)
+        return -1;
+    n = ioctx_write (f->ioctx, buf, count);
+    _stream_end (f, n);
+    return n;
+}
+
 /* Tread - read from a file or directory.
  */
 Npfcall*
@@ -480,8 +549,11 @@ diod_read (Npfid *fid, u64 offset, u32 count, Npreq *req)
     }
     if (f->flags & DIOD_FID_FLAGS_XATTR)
         n = xattr_pread (f->xattr, ret->u.rread.data, count, offset);
-    else
+    else {
         n = ioctx_pread (f->ioctx, ret->u.rread.data, count, offset);
+        if (n < 0 && errno == ESPIPE)
+            n = _stream_read (f, ret->u.rread.data, count, offset);
+    }
     if (n < 0) {
         np_uerror (errno);
         goto error_quiet;
@@ -514,8 +586,11 @@ diod_write (Npfid *fid, u64 offset, u32 count, u8 *data, Npreq *req)
     }
     if (f->flags & DIOD_FID_FLAGS_XATTR)
         n = xattr_pwrite (f->xattr, data, count, offset);
-    else
+    else {
         n = ioctx_pwrite (f->ioctx, data, count, offset);
+        if (n < 0 && errno == ESPIPE)
+            n = _stream_write (f, data, count, offset);
+    }
     if (n < 0) {
         np_uerror (errno);
         goto error_quiet;
@@ -1141,7 +1216,7 @@ error_quiet:
 }
 
 static u32
-_copy_dirent_linux (Fid *f, struct dirent *d, long offset, u8 *buf, u32 buflen)
+_copy_dirent_linux (Fid *f, struct dirent *d, u64 offset, u8 *buf, u32 buflen)
 {
     Npqid qid;
     u32 ret = 0;
@@ -1169,12 +1244,14 @@ _read_dir_linux (Fid *f, u8* buf, u64 offset, u32 count)
 {
     struct dirent *d;
     int i, n = 0;
-    long new_offset;
+    u64 new_offset;
 
     if (offset == 0)
         ioctx_rewinddir (f->ioctx);
-    else
-        ioctx_seekdir (f->ioctx, offset);
+    else if (ioctx_seekdir (f->ioctx, offset) < 0) {
+        np_uerror (errno);
+        return 0;
+    }
     do {
         errno = 0;
         d = ioctx_readdir (f->ioctx, &new_offset);
@@ -1326,7 +1403,12 @@ diod_getlock (Npfid *fid, u8 type, u64 start, u64 length, u32 proc_id,
         np_uerror (ENOMEM);
         goto error;
     }
-    if (type != Lrdlck && type != Lwrlck) {
+    /* The Linux v9fs client always sets type to Lunlck in Tgetlock
+     * (since kernel commit 51b8b4fb3227, 2011) to ask whether any lock
+     * would conflict.  Treat that like a test for a write lock, which
+     * conflicts with any existing lock.
+     */
+    if (type != Lrdlck && type != Lwrlck && type != Lunlck) {
         np_uerror (EINVAL);
         goto error;
     }

@@ -16,17 +16,22 @@ TESTSCRIPTS = \
 	t0003-basic-multiuser.t \
 	t0004-npclient-basic.t \
 	t0005-npclient-xattr.t \
+	t0008-npclient-vsock.t \
 	t0006-npclient-issues.t \
+	t0007-configfile.t \
 	t0010-v9fs-runasuser.t \
 	t0011-v9fs-allsquash.t \
 	t0012-v9fs-multiuser.t \
 	t0013-v9fs-acl.t \
+	t0014-v9fs-mount8.t \
 	t0020-dbench.t \
 	t0021-postmark.t \
 	t0022-scrub.t \
 	t0023-rsync.t \
 	t0024-selfhost.t \
-	t0025-pathwalk.t
+	t0025-pathwalk.t \
+	t0026-munge-auth.t \
+	t0028-syspackage.t
 
 # make check runs these TAP tests directly (both scripts and programs)
 TESTS = \
@@ -38,7 +43,8 @@ dist_check_SCRIPTS = \
 EXTRA_DIST = \
 	sharness.sh \
 	aggregate-results.sh \
-	sharness.d
+	sharness.d \
+	etc
 
 
 AM_CFLAGS = @WARNING_CFLAGS@

@@ -16,6 +16,10 @@ if ! test_have_prereq V9FS_CLIENT; then
         skip_all='linux 9p kernel client is required'
         test_done
 fi
+if ! test_have_prereq DIODMOUNT; then
+        skip_all='diod was configured with --disable-diodmount'
+        test_done
+fi
 if PATH_TCLSH=$(which tclsh); then
 	test_set_prereq TCLSH
 fi
@@ -30,13 +34,13 @@ test_under_diod unixsocket \
 
 # gnome probes for .Trash, autorun.inf, etc asynchronously on new mounts,
 # causing umount to fail with EBUSY if still in progress.  Therefore --lazy.
-umountcmd="$SUDO umount --lazy"
-mountcmd="$SUDO mount -n -t 9p"
-mountopts="trans=unix,uname=$(id -un)"
+umountcmd="$SUDO umount -l"
+mountcmd="$SUDO $PATH_MOUNT_DIOD -n"
 
 test_flock=$SHARNESS_BUILD_DIRECTORY/src/cmd/test_flock
 test_flock_single=$SHARNESS_BUILD_DIRECTORY/src/cmd/test_flock_single
 test_atomic_create=$SHARNESS_BUILD_DIRECTORY/src/cmd/test_atomic_create
+test_create=$SHARNESS_BUILD_DIRECTORY/src/cmd/test_create
 
 # usage: create_file name [block_count]
 create_file() {
@@ -47,19 +51,19 @@ create_file() {
 
 # usage: stat_min path
 stat_min() {
-	$PATH_STAT -c "mode=%f owner=%u:%g size=%s blocks=%b blocksize=%B links=%h device=%t:%T mtime=%y ctime=%z atime=%x" $1
+	stat -c "mode=%f owner=%u:%g size=%s blocks=%b blocksize=%B links=%h device=%t:%T mtime=%y ctime=%z atime=%x" $1
 }
 
 # usage: statfs_min path
 statfs_min() {
-	$PATH_STAT -f -c "blocks=% bsize=%S files=%c namelen=%l" $1
+	stat -f -c "blocks=% bsize=%S files=%c namelen=%l" $1
 }
 
 # Usage: check_chmod src-path dst-path
 check_chmod () {
 	for i in 0 1 2 3 4 5 6 7; do
 	    chmod $i$i$i $1
-	    test "$($PATH_STAT -c %a $1)" = "$($PATH_STAT -c %a $2)" || return 1
+	    test "$(stat -c %a $1)" = "$(stat -c %a $2)" || return 1
 	done
 	return 0;
 }
@@ -80,12 +84,12 @@ test_expect_success 'wait for server socket' '
 	waitsock $DIOD_SOCKET 30
 '
 test_expect_success 'mount filesystem with access=<uid> on mnt' '
-	$mountcmd -oaname=$exportdir,$mountopts,access=$(id -u) \
-	    $DIOD_SOCKET mnt
+	$mountcmd -ouname=$(id -un),access=$(id -u) $DIOD_SOCKET:$exportdir mnt
 '
+# On alpine/busybox, %T decodes as type=UNKNOWN.  Use %t instead.
 test_expect_success STAT 'file system type is v9fs' '
-	echo v9fs >type.exp &&
-	stat -f -c "%T" mnt >type.out &&
+	echo 1021997 >type.exp &&
+	stat -f -c "%t" mnt >type.out &&
 	test_cmp type.exp type.out
 '
 test_expect_success STAT 'client/server mount point stats match' '
@@ -141,9 +145,9 @@ test_expect_success 'create a large file, then fsync+fdatasync' '
 	cmp exp/dir/c mnt/dir/c
 '
 test_expect_success STAT 'append 3 bytes to a file' '
-	orig_size=$($PATH_STAT -c "%s" mnt/dir/a) &&
+	orig_size=$(stat -c "%s" mnt/dir/a) &&
 	echo -n foo >>mnt/dir/a &&
-	new_size=$($PATH_STAT -c "%s" mnt/dir/a) &&
+	new_size=$(stat -c "%s" mnt/dir/a) &&
 	test $new_size -eq $(($orig_size+3)) &&
 	cmp exp/dir/a mnt/dir/a
 '
@@ -155,10 +159,10 @@ test_expect_success 'create a file' '
 	create_file mnt/dir/d 1024
 '
 test_expect_success FLOCK 'flock-write a file' '
-	$PATH_FLOCK -x mnt/dir/d true
+	flock -x mnt/dir/d true
 '
 test_expect_success FLOCK 'flock-read a file' '
-	$PATH_FLOCK -s mnt/dir/d true
+	flock -s mnt/dir/d true
 '
 test_expect_success 'run flock concurrency test' '
 	$test_flock  mnt/dir/d
@@ -190,7 +194,7 @@ test_expect_success 'mktemp -d works' '
 '
 test_expect_success STAT 'create a fifo' '
 	mkfifo mnt/fifo &&
-	test $($PATH_STAT -c %F exp/fifo) = fifo
+	test $(stat -c %F exp/fifo) = fifo
 '
 test_expect_success 'df works' '
 	df mnt
@@ -210,14 +214,6 @@ test_expect_success TCLSH 'tclsh file delete -force works' '
 	) &&
 	! test -d mnt/tcldir/x
 '
-# Trigger a Tflush
-test_expect_success 'start a streaming write then abort it' '
-	dd if=/dev/zero of=mnt/stream bs=1024k count=500 status=noxfer &
-	pid=$! &&
-	sleep 0.5 &&
-	kill -15 $pid &&
-	test_expect_code 143 wait $pid
-'
 test_expect_success 'create 1000 files in a exp/bigdir' '
 	mkdir -p exp/bigdir &&
 	for i in $(seq 1 1000); do \
@@ -231,15 +227,16 @@ test_expect_success 'list long directory' '
 test_expect_success 'root cannot read file' '
 	test -f mnt/dir/a &&
 	test_must_fail $SUDO cat mnt/dir/a >/dev/null 2>rootread.err &&
-	grep "not permitted" rootread.err
+	test_grep "not permitted" rootread.err
 '
 test_expect_success STAT 'root cannot stat file' '
-	test_must_fail $SUDO $PATH_STAT mnt/dir/a >/dev/null 2>rootstat.err &&
-	grep "not permitted" rootstat.err
+	test_must_fail $SUDO stat mnt/dir/a >/dev/null 2>rootstat.err &&
+	test_grep "not permitted" rootstat.err
 '
 test_expect_success 'root cannot create file' '
-	test_must_fail $SUDO touch mnt/dir/asroot 2>rootwrite.err &&
-	grep "not permitted" rootwrite.err
+	test_must_fail $SUDO $test_create mnt/dir/asroot 2>rootwrite.err &&
+	test_grep "not permitted" rootwrite.err &&
+	! test -e exp/dir/asroot
 '
 
 # Usage: makefiles dir
@@ -267,7 +264,7 @@ checkmodes () {
     for u in 0 1 2 3 4 5 6 7; do
         for g in 0 1 2 3 4 5 6 7; do
             for o in 0 1 2 3 4 5 6 7; do
-                test "$($PATH_STAT -c "%a" $path/f.$seq)" -eq "$u$g$o" || rc=1
+                test "$(stat -c "%a" $path/f.$seq)" -eq "$u$g$o" || rc=1
                 seq=$(($seq + 1))
             done
         done
@@ -286,13 +283,11 @@ test_expect_success 'creating a file with O_CREAT|OEXCL fails if file exists' '
 	$test_atomic_create mnt/atomic_create
 '
 test_expect_success 'mount filesystem with access=any on mnt2' '
-	$mountcmd \
-	    -oaname=$exportdir,$mountopts,access=any \
-	    $DIOD_SOCKET mnt2
+	$mountcmd -ouname=$(id -un),access=any $DIOD_SOCKET:$exportdir mnt2
 '
 test_expect_success STAT 'create file as root on mnt2' '
 	$SUDO touch mnt2/dir/asroot &&
-	test "$($PATH_STAT -c "%u:%g" exp/dir/asroot)" = "$(id -u):$(id -g)"
+	test "$(stat -c "%u:%g" exp/dir/asroot)" = "$(id -u):$(id -g)"
 '
 test_expect_success 'create file on server, appears on client' '
 	touch exp/dir/z &&
@@ -306,31 +301,51 @@ test_expect_success 'unmount mnt2' '
 	$umountcmd mnt2
 '
 test_expect_success 'mount filesystem with access=user on mnt2' '
-	$mountcmd \
-	    -oaname=$exportdir,$mountopts,access=user \
-	    $DIOD_SOCKET mnt2
+	$mountcmd -ouname=$(id -un),access=user $DIOD_SOCKET:$exportdir mnt2
 '
 test_expect_success STAT 'create a file as me' '
 	create_file mnt2/dir/asme &&
-	test "$($PATH_STAT -c "%u:%g" exp/dir/asme)" = "$(id -u):$(id -g)"
+	test "$(stat -c "%u:%g" exp/dir/asme)" = "$(id -u):$(id -g)"
 '
 test_expect_success 'root cannot create file' '
-	test_must_fail $SUDO touch mnt2/dir/asroot2 2>rootwrite2.err &&
-	grep "not permitted" rootwrite2.err
+	test_must_fail $SUDO $test_create mnt2/dir/asroot2 2>rootwrite2.err &&
+	test_grep "not permitted" rootwrite2.err &&
+	! test -e exp/dir/asroot2
 '
 test_expect_success 'unmount mnt2' '
 	$umountcmd mnt2
 '
 test_expect_success 'mount filesystem with uname=root,access=any fails' '
-	test_must_fail $mountcmd \
-	    -oaname=$exportdir,uname=root,trans=unix,access=any \
-	    $DIOD_SOCKET mnt2
+	test_must_fail $mountcmd -ouname=root,access=any \
+	    $DIOD_SOCKET:$exportdir mnt2
 '
 test_expect_success 'clean up mnt2, if mount unexpectedly succeeded' '
 	$umountcmd mnt2 2>/dev/null || :
 '
 test_expect_success 'unmount mnt' '
 	$umountcmd mnt
+'
+
+# --statfs-passthru makes statfs report the exported file system's type
+# instead of V9FS_MAGIC.  Use a second server so the main one is
+# unaffected.
+test_expect_success STAT 'start a second server with --statfs-passthru' '
+	diod_start --config-file=/dev/null --runas=$(id -u) --no-auth \
+	    --export=$exportdir --statfs-passthru &&
+	PASSTHRU_SOCKET=$DIOD_SOCKET
+'
+test_expect_success STAT 'mount the --statfs-passthru server on mnt2' '
+	$mountcmd -ouname=$(id -un),access=$(id -u) \
+	    $PASSTHRU_SOCKET:$exportdir mnt2
+'
+test_expect_success STAT 'file system type is passed through' '
+	stat -f -c "%t" exp >ptype.exp &&
+	stat -f -c "%t" mnt2 >ptype.out &&
+	test_cmp ptype.exp ptype.out
+'
+test_expect_success STAT 'unmount mnt2 and stop the second server' '
+	$umountcmd mnt2 &&
+	diod_term $PASSTHRU_SOCKET
 '
 
 # N.B. Server exits when conn count drops to zero.

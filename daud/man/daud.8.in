@@ -8,8 +8,8 @@ daud \- a 9P2000.L file server, a fork of diod
 .B daud
 is a 9P2000.L file server.
 .LP
-daud is a fork of diod (https://github.com/chaos/diod) made for 9share (9share(8)), which starts it; it needs no configuration file.
-Some configuration can be overridden on the command line, as described below.
+daud is a fork of diod (https://github.com/chaos/diod) made for 9share (9share(8)), which starts it.  This build has no configuration file
+(diod.conf, which diod's own manual describes, is not read) and no MUNGE authentication: everything is set by the options below.
 .SH OPTIONS
 .TP
 .I "-r, --rfdno INT"
@@ -21,52 +21,55 @@ the two options may be set to the same value.
 .TP
 .I "-l, --listen address"
 Set the listen address.  The address may be in the form of
-HOST:PORT, IP:PORT, or /path/to/unix_domain_socket form (default 0.0.0.0:564).
+HOST:PORT, IP:PORT, vsock:[CID:]PORT, or /path/to/unix_domain_socket form
+(default 0.0.0.0:564).
 IPv6 addresses must be enclosed in square brackets.
+A vsock address listens for connections from virtual machines over
+\fIvsock(7)\fR.
+If CID is omitted, any local CID is accepted, which is usual on a host.
+Clients connecting over vsock are identified by "vsock:CID" for the
+purposes of export host restrictions and logging, so an export may be
+limited to particular guests with e.g. \fIhosts = "vsock:[3-5]"\fR.
+The \fIprivport\fR export option does not apply to vsock connections.
 This option may be specified more than once.
 It overrides the \fIlisten\fR config file setting.
 .TP
 .I "-t, --nwthreads INT"
 Set the number of worker threads to spawn to handle 9P operations
 for each unique aname.
-This option overrides the \fInwthreads\fR setting in diod.conf (5).
 The default is 16.
 .TP
 .I "-e, --export PATH"
 Set the file system to be exported.
 This option may be specified more than once.
-It overrides the \fIexports\fR setting in diod.conf (5).
 .TP
 .I "-E, --export-all"
 Export everything in the server's /proc/mounts.
 .TP
 .I "-o, --export-opts OPT[,OPT,...]"
 Set global export options.
-This option overrides the \fIexportopts\fR setting in diod.conf (5).
 .TP
 .I "-n, --no-auth"
 This option allows users to attach without security credentials.
-It overrides  the \fIauth_required\fR setting in diod.conf (5).
 See SECURITY below.
 .TP
 .I "-H, --no-hostname-lookup"
 This option disables hostname lookups.
-It overrides the \fIhostname_lookup\fR setting in diod.conf (5).
+.TP
+.I "-p, --statfs-passthru"
+Make statfs report the exported file system's type rather than V9FS_MAGIC.
 .TP
 .I "-N, --no-userdb"
 This option disables password/group lookups.
 It allows any uid to attach and assumes gid=uid, and supplementary groups
 contain only the primary gid.
-It overrides  the \fIuserdb\fR setting in diod.conf (5).
 .TP
 .I "-S, --allsquash"
 Remap all users to the squash user.
 The attaching user need not be present in the server's password file.
-This option overrides the \fIallsquash\fR setting in diod.conf (5).
 .TP
-.I "-U, --squashuser"
+.I "-U, --squashuser USER"
 Set the squash user.  The default is nobody.
-This option overrides the \fIsquashuser\fR setting in diod.conf (5).
 Note: if \fBdiod\fR is not run as root, the effective uid overrides
 the \fIsquashuser\fR.
 .TP
@@ -80,16 +83,22 @@ Set the destination for logging.  Possible destinations are
 \fIstderr\fR,
 \fIstdout\fR, or
 a file name.
-This option overrides the \fIlogdest\fR setting in diod.conf (5).
 .TP
 .I "-d, --debug MASK"
 Set the debug mask.  The bit values are:
 .br
 0x01 - log decoded 9P protocol messages
 .br
+0x02 - log user lookups
+.br
+0x04 - log fids still in use when a connection closes
+.br
+0x08 - log Tflush handling
+.br
+0x10 - add timestamps to 9P protocol messages
 .TP
 .I "-c, --config-file PATH"
-Set config file path.
+This build has no configuration file support: an empty file is accepted and anything else is refused with "no config suport".
 .TP
 .I "--dial COMMAND"
 Serve one export over a resumable link, as 9share does: run COMMAND with its standard input and output as the carrier of the
@@ -164,17 +173,32 @@ and \fBCAP_FOWNER\fR.  The v9fs client is assumed to be performing access
 checks.  This largely works around complications that arise when supplementary
 groups cannot be loaded.
 .LP
-Since the v9fs client does not know how to authenticate with MUNGE,
-mount.diod (8) establishes the server connection and performs the
-authentication exchange and an initial \fITattach\fR as root, then passes
-the open file descriptor into the kernel with the mount (2) system call.
-The kernel v9fs client then re-introduces itself as root with \fIafid\fR
-set to -1.  As noted above this \fITattach\fR and subsequent ones on this
-connection are accepted by the server by virtue of the initial authenticated
-root attachment.
+This build has no MUNGE authentication and no mount.diod helper (see \fB--no-auth\fR above).  9share mounts through the kernel's 9p client
+directly (\fB9share mount\fR); who may connect is decided by ssh, and by the shared secret of the link (\fB--link-secret-file\fR).
 .SH "FILES"
-@X_SBINDIR@/diod
-.br
-@X_SYSCONFDIR@/diod.conf
+@X_SBINDIR@/daud
+.SH CAVEATS
+Some builds of the util-linux \fImount(8)\fR look up a new
+mount right after making it, as the user running \fImount(8)\fR,
+normally root.  When that is denied, \fImount(8)\fR unmounts the file
+system again and reports
+.LP
+.nf
+    filesystem was mounted, but any subsequent operation failed:
+    Operation not permitted
+.fi
+.LP
+It is denied whenever root may not access the file system, for example
+with \fIaccess=UID\fR for another UID, or with \fBdiod\fR running as
+\fB--runas-uid\fR.  Affected builds use the kernel's file descriptor
+based mount API and list \fIfd-based-mount\fR in the output of
+\fImount --version\fR.  The BusyBox \fImount\fR, which uses the classic
+mount system call, is not affected.
+.LP
+To work around it with \fImount -t 9p\fR, set
+\fBLIBMOUNT_FORCE_MOUNT2=always\fR in the environment of \fImount(8)\fR,
+which makes it use the classic mount system call.  That variable needs
+util-linux 2.40 or later, is ignored when \fImount(8)\fR runs setuid,
+and is dropped by \fIsudo\fR unless passed with \fIenv\fR (1).
 .SH "SEE ALSO"
-diod.conf (5), mount.diod (8), hosts_access (5)
+9share (8)

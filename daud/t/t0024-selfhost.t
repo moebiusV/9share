@@ -18,6 +18,10 @@ if ! test_have_prereq V9FS_CLIENT; then
 	skip_all='linux 9p kernel client is required'
 	test_done
 fi
+if ! test_have_prereq DIODMOUNT; then
+	skip_all='diod was configured with --disable-diodmount'
+	test_done
+fi
 clonefrom=$(realpath $SHARNESS_TEST_SRCDIR/..)
 if ! test -d $clonefrom/.git; then
 	skip_all='source tree is not a git clone'
@@ -38,9 +42,9 @@ test_under_diod unixsocket \
 
 # gnome probes for .Trash, autorun.inf, etc asynchronously on new mounts,
 # causing umount to fail with EBUSY if still in progress.  Therefore --lazy.
-umountcmd="$SUDO umount --lazy"
-mountcmd="$SUDO mount -n -t 9p"
-mountopts="trans=unix,uname=$(id -un)"
+umountcmd="$SUDO umount -l"
+mountcmd="$SUDO $PATH_MOUNT_DIOD -n"
+mountopts="uname=$(id -un)"
 
 test_expect_success 'create export/mount directories' '
 	mkdir -p exp mnt
@@ -49,8 +53,7 @@ test_expect_success 'wait for server socket' '
 	waitsock $DIOD_SOCKET 30
 '
 test_expect_success 'mount filesystem with access=<uid> mnt' '
-	$mountcmd -oaname=$exportdir,$mountopts,access=$(id -u) \
-	    $DIOD_SOCKET mnt
+	$mountcmd -o$mountopts,access=$(id -u) $DIOD_SOCKET:$exportdir mnt
 '
 test_expect_success 'clone git repository' '
 	(cd mnt && git clone $clonefrom)

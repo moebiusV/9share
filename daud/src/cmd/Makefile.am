@@ -4,7 +4,7 @@ AM_CPPFLAGS = \
 	-I$(top_srcdir) \
 	$(MUNGE_CFLAGS) \
 	$(CAP_CFLAGS) \
-	$(LUA_INCLUDE)
+	$(LUA_CFLAGS)
 
 # daud: the one program p9share needs (upstream's diodcli, dtop and mount.diod are not built)
 sbin_PROGRAMS = daud
@@ -14,9 +14,10 @@ common_ldadd = \
 	$(top_builddir)/src/libnpclient/libnpclient.a \
 	$(top_builddir)/src/libnpfs/libnpfs.a \
 	$(top_builddir)/src/liblink/liblink.a \
+	$(top_builddir)/src/libhostlist/libhostlist.a \
 	$(top_builddir)/src/liblsd/liblsd.a \
 	$(top_builddir)/src/libdiod/libdiod.a \
-	$(LIBPTHREAD) $(LUA_LIB) $(MUNGE_LIBS) $(CAP_LIBS) \
+	$(LIBPTHREAD) $(LUA_LIBS) $(MUNGE_LIBS) $(CAP_LIBS) \
 	$(LIBIBVERBS) $(LIBRDMACM) $(LIBTCMALLOC)
 
 common_sources = \
@@ -32,12 +33,16 @@ TESTS = \
 check_PROGRAMS = \
 	test_diodrun \
 	test_tflush \
+	test_tversion \
 	test_tattach \
+	test_authattach \
 	test_loadgen \
 	test_pathwalk \
 	test_flock \
 	test_flock_single \
 	test_atomic_create \
+	test_create \
+	test_vsockcheck \
 	$(TESTS)
 
 TEST_EXTENSIONS = .t
@@ -58,8 +63,16 @@ test_tflush_SOURCES = test/tflush.c $(common_sources)
 test_tflush_LDADD = \
 	$(common_ldadd)
 
+test_tversion_SOURCES = test/tversion.c $(common_sources)
+test_tversion_LDADD = \
+	$(common_ldadd)
+
 test_tattach_SOURCES = test/tattach.c $(common_sources)
 test_tattach_LDADD = \
+	$(common_ldadd)
+
+test_authattach_SOURCES = test/authattach.c $(common_sources)
+test_authattach_LDADD = \
 	$(common_ldadd)
 
 test_loadgen_SOURCES = test/loadgen.c $(common_sources)
@@ -81,3 +94,9 @@ test_flock_single_LDADD = \
 test_atomic_create_SOURCES = test/atomic_create.c $(common_sources)
 test_atomic_create_LDADD = \
 	$(common_ldadd)
+
+test_create_SOURCES = test/create.c $(common_sources)
+test_create_LDADD = \
+	$(common_ldadd)
+
+test_vsockcheck_SOURCES = test/vsockcheck.c

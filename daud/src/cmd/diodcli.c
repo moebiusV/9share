@@ -45,6 +45,7 @@
 #include <inttypes.h>
 #include <string.h>
 #include <getopt.h>
+#include <libgen.h>
 #if HAVE_SYS_XATTR_H
 #include <sys/xattr.h>
 #else
@@ -55,7 +56,7 @@
 #include "src/libnpclient/npclient.h"
 
 #include "src/liblsd/list.h"
-#include "src/liblsd/hostlist.h"
+#include "src/libhostlist/hostlist.h"
 #include "src/libdiod/diod_log.h"
 #include "src/libdiod/diod_sock.h"
 #include "src/libdiod/diod_auth.h"
@@ -74,6 +75,7 @@ static char *prog;
 /* Try to Twalk an open fid.
  * This mimics what the linux kernel v9fs client does when
  * we ls -l a mounted directory.
+ * See also: chaos/diod#47
  */
 int cmd_open_walk (Npcfid *root, int argc, char **argv)
 {
@@ -105,6 +107,7 @@ done:
 }
 
 /* Tread should work on opened fids even if the file has been removed
+ * See also: chaos/diod#47
  */
 int cmd_open_remove_read (Npcfid *root, int argc, char **argv)
 {
@@ -141,6 +144,7 @@ done:
 }
 
 /* Tgetattr should work on opened fids even if the file has been removed
+ * See also: chaos/diod#19
  */
 int cmd_open_remove_getattr (Npcfid *root, int argc, char **argv)
 {
@@ -181,6 +185,7 @@ done:
 }
 
 /* Tsetattr should work on opened fids even if the file has been removed
+ * See also: chaos/diod#47
  */
 int cmd_open_remove_setattr (Npcfid *root, int argc, char **argv)
 {
@@ -245,6 +250,7 @@ done:
 
 /* Tsetattr on a fid opened from path should not affect path when path
  * is no longer the same file
+ * See also: chaos/diod#47
  */
 int cmd_open_remove_create_setattr (Npcfid *root, int argc, char **argv)
 {
@@ -356,8 +362,8 @@ int cmd_listxattr (Npcfid *root, int argc, char **argv)
         errn (np_rerror (), "%s", filename);
         goto done;
     }
-    int i, count;
-    for (i = 0, count = 0; i < len && buf[i] != '\0'; count++) {
+    int i;
+    for (i = 0; i < len && buf[i] != '\0';) {
         char *key = &buf[i];
         int klen = len - i;
 
@@ -462,9 +468,9 @@ static const struct option smlongopts[] = {
 int cmd_showmount (Npcfid *root, int argc, char **argv)
 {
     Npcfid *fid;
-    char buf[80], *host, *p;
-    hostlist_t hl = NULL;
-    hostlist_iterator_t itr;
+    char buf[80], *p;
+    const char *host;
+    struct hostlist *hl = NULL;
     int c;
     bool lopt = false;
     int rc = -1;
@@ -489,7 +495,7 @@ int cmd_showmount (Npcfid *root, int argc, char **argv)
         errn (np_rerror (), "open connections");
         return -1;
     }
-    if (!(hl = hostlist_create (NULL))) {
+    if (!(hl = hostlist_create ())) {
         err ("hostlist_create");
         goto done;
     }
@@ -498,28 +504,27 @@ int cmd_showmount (Npcfid *root, int argc, char **argv)
             *p = '\0';
         if (!lopt && (p = strchr (buf, '.')))
             *p = '\0';
-        if (!hostlist_push_host (hl, buf)) {
-            err ("hostlist_push_host");
+        if (hostlist_append (hl, buf) < 0) {
+            err ("hostlist_append");
             goto done;
         }
     }
     hostlist_uniq (hl);
     if (lopt) {
-        if (!(itr = hostlist_iterator_create (hl))) {
-            err ("hostlist_iterator_create");
-            goto done;
-        }
-        while ((host = hostlist_next (itr)))
+        host = hostlist_first (hl);
+        while (host) {
             printf ("%s\n", host);
-        hostlist_iterator_destroy (itr);
+            host = hostlist_next (hl);
+        }
     } else {
-        char s[1024];
+        char *s;
 
-        if (hostlist_ranged_string (hl, sizeof (s), s) < 0) {
-            msg ("hostlist output would be too long (use -l)");
+        if (!(s = hostlist_encode (hl))) {
+            err ("hostlist_encode");
             goto done;
         }
         printf ("%s\n", s);
+        free (s);
     }
     rc = 0;
 done:
@@ -637,6 +642,42 @@ done:
         errn (np_rerror (), "clunk %s", filename);
         return -1;
     }
+    return rc;
+}
+
+/* Txattrcreate with an attr_size the server should refuse to allocate.
+ */
+int cmd_setxattr_hugesize (Npcfid *root, int argc, char **argv)
+{
+    char *filename;
+    char *attrname;
+    Npcfid *fid;
+    u64 size;
+    int rc = -1;
+
+    if (argc != 4) {
+        fprintf (stderr,
+                 "Usage: %s %s filename attrname size\n", prog, argv[0]);
+        return -1;
+    }
+    filename = argv[1];
+    attrname = argv[2];
+    size = strtoull (argv[3], NULL, 0);
+
+    if (!(fid = npc_walk (root, filename))) {
+        errn (np_rerror (), "walk %s", filename);
+        return -1;
+    }
+    if (npc_xattrcreate (fid, attrname, size, 0) < 0) {
+        errn (np_rerror (), "xattrcreate %s", filename);
+        goto done;
+    }
+    rc = 0;
+done:
+    /* Clunk sets the attribute, which may fail for reasons that depend
+     * on the file system.  Only the xattrcreate result is of interest.
+     */
+    (void)npc_clunk (fid);
     return rc;
 }
 
@@ -1103,6 +1144,12 @@ static struct subcmd subcmds[] = {
         .hidden = true,
     },
     {
+        .name = "bug-setxattr-hugesize",
+        .desc = "Txattrcreate with huge attr_size",
+        .cmd = cmd_setxattr_hugesize,
+        .hidden = true,
+    },
+    {
         .name = "bug-open-walk",
         .desc = "Twalk on open fid",
         .cmd = cmd_open_walk,
@@ -1146,7 +1193,8 @@ usage (void)
     fprintf (stderr,
 "Usage: %s [OPTIONS] subcommand [SUBOPTIONS] ...\n"
 "   -a,--aname NAME       file system (default ctl)\n"
-"   -s,--server HOST:PORT server (default localhost:564)\n"
+"   -s,--server ADDR      HOST[:PORT], vsock:[CID:]PORT, or /path/to/socket\n"
+"                         (default localhost:564)\n"
 "   -m,--msize            msize (default 65536)\n"
 "   -u,--uid              authenticate as uid (default is your euid)\n"
 "   -p,--privport         connect from a privileged port (root user only)\n"
@@ -1187,7 +1235,7 @@ main (int argc, char *argv[])
             case 'a':   /* --aname NAME */
                 aname = optarg;
                 break;
-            case 's':   /* --server HOST[:PORT] or /path/to/socket */
+            case 's':   /* --server HOST[:PORT], vsock:[CID:]PORT, or /path */
                 server = optarg;
                 break;
             case 'm':   /* --msize SIZE */
