@@ -20,6 +20,11 @@ install-data-local:
 	$(MKDIR_P) $(DESTDIR)$(sysconfdir)/9share
 	test -e $(DESTDIR)$(sysconfdir)/9share/9share.conf || $(INSTALL_DATA) $(srcdir)/etc/9share.conf $(DESTDIR)$(sysconfdir)/9share/9share.conf
 
+# uninstall takes the template away only if nobody has edited it (the user's own file stays), then the directory if it is empty
+uninstall-local:
+	if cmp -s $(srcdir)/etc/9share.conf $(DESTDIR)$(sysconfdir)/9share/9share.conf; then rm -f $(DESTDIR)$(sysconfdir)/9share/9share.conf; fi
+	-rmdir $(DESTDIR)$(sysconfdir)/9share 2>/dev/null
+
 EXTRA_DIST = etc/9share.conf debian/9share.init debian/9share.postinst debian/9share.prerm README INSTALL HACKING NEWS ChangeLog AUTHORS COPYING \
              grammars/9share.hbnf tools/regen-conf.sh systemd/9share.service.in \
              docs/index.md docs/_config.yml debian/control debian/rules debian/changelog debian/copyright debian/docs debian/source/format
