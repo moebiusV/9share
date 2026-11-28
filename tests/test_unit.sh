@@ -6,5 +6,5 @@ U=${NINESHARE_UNIT:?}
 fail=0
 x=$(sed -n 's/^ExecStart=//p' "$U")
 case $x in /*) ;; *) echo "FAILED: ExecStart is not an absolute path: $x"; fail=1;; esac
-if grep -n -E '[$@]' "$U"; then echo "FAILED: unexpanded text in the unit"; fail=1; fi
+if grep -v -E '^ExecReload=/bin/kill -HUP \$MAINPID$' "$U" | grep -n -E '[$@]'; then echo "FAILED: unexpanded text in the unit"; fail=1; fi
 exit $fail

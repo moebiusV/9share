@@ -1,4 +1,4 @@
-/* cmds.c -- the commands a person types: export, unexport, mount, unmount, rw|ro|off, status, wsl-boot. */
+/* cmds.c -- the commands a person types: export, unexport, import, unimport, mount, unmount, rw|ro|off, status, wsl-boot. */
 #include "cmds.h"
 #include "9share.h"
 #include "../daud/src/liblink/crypto.h"
@@ -98,6 +98,7 @@ int cmd_export(int argc, char **argv)
     snprintf(text, sizeof text, "export \"%s\" {\n\tdirectory \"%s\"\n\thost \"%s\"\n}\n", name, dir, host);
     if (p9_block_append(confp, text) < 0)
         return fail("cannot write %s", confp);
+    p9_reload_serve();
     printf("sharing %s with %s as '%s'\n", dir, host, name);
     ssh_user(host, user, sizeof user);
     printf("on %s:   sudo 9share mount %s %s /mnt/%s\n", host, user, name, name);
@@ -130,6 +131,7 @@ int cmd_unexport(int argc, char **argv)
     for (i = 0; i < c.nexports; i++)
         if (!strcmp(c.exports[i].name, argv[0])) {
             if (p9_block_remove(confp, "export", argv[0], c.exports[i].line) == 0) {
+                p9_reload_serve();
                 printf("no longer sharing '%s'\n", argv[0]);
                 rc = 0;
             } else
@@ -138,6 +140,94 @@ int cmd_unexport(int argc, char **argv)
         }
     if (i == c.nexports)
         fail("no export named '%s'", argv[0]);
+    nineshare_conf_free(&c);
+    return rc;
+}
+
+/* import HOST DIR [NAME]: show HOST's DIR here (absolute there, or relative to the home of the account ssh logs in as).  Needs the mount block too. */
+int cmd_import(int argc, char **argv)
+{
+    char confp[PB], text[3 * P9_LINE], name[128];
+    const char *host, *dir, *base;
+    struct nineshare_conf c;
+    struct passwd *pw = getpwuid(getuid());
+    size_t i;
+    if (argc < 2 || argc > 3) {
+        fprintf(stderr, "usage: 9share import HOST DIR [NAME]\n");
+        return 2;
+    }
+    host = argv[0];
+    dir = argv[1];
+    if (argc == 3)
+        snprintf(name, sizeof name, "%s", argv[2]);
+    else {
+        base = strrchr(dir, '/');
+        snprintf(name, sizeof name, "%s", base ? base + 1 : dir);
+    }
+    if (!nineshare_valid_name(name))
+        return fail("'%s' cannot be the name of an import: give one (letters, digits and . _ -, not starting with . _ -) as a third argument", name);
+    if (!nineshare_valid_host(host))
+        return fail("'%s' is not a host name as ssh knows it", host);
+    if (!nineshare_valid_rpath(dir))
+        return fail("%s: the directory is a path of letters, digits and . _ + @ - / (no spaces, no ..), absolute or relative to the home there", dir);
+    p9_user_conf_path(NULL, confp, sizeof confp);
+    if (conf_refused(confp, (unsigned)getuid()))
+        return 1;
+    nineshare_conf_init(&c);
+    if (p9_file_exists(confp))
+        nineshare_conf_parse(confp, &c);
+    for (i = 0; i < c.nexports; i++)
+        if (!strcmp(c.exports[i].name, name)) {
+            nineshare_conf_free(&c);
+            return fail("'%s' is already an export: use another name", name);
+        }
+    for (i = 0; i < c.nimports; i++)
+        if (!strcmp(c.imports[i].name, name)) {
+            if (p9_block_remove(confp, "import", name, c.imports[i].line) < 0) {
+                nineshare_conf_free(&c);
+                return fail("cannot replace the import '%s' in the configuration", name);
+            }
+            break;
+        }
+    nineshare_conf_free(&c);
+    snprintf(text, sizeof text, "import \"%s\" {\n\tdirectory \"%s\"\n\thost \"%s\"\n}\n", name, dir, host);
+    if (p9_block_append(confp, text) < 0)
+        return fail("cannot write %s", confp);
+    p9_reload_serve();
+    printf("importing %s from %s as '%s'\n", dir, host, name);
+    printf("here, once, as root:   sudo 9share mount %s %s /mnt/%s\n", pw ? pw->pw_name : "USER", name, name);
+    printf("(9share must be installed on %s, with ssh to it without a password)\n", host);
+    return 0;
+}
+
+int cmd_unimport(int argc, char **argv)
+{
+    char confp[PB];
+    struct nineshare_conf c;
+    size_t i;
+    int rc = 1;
+    if (argc != 1) {
+        fprintf(stderr, "usage: 9share unimport NAME\n");
+        return 2;
+    }
+    p9_user_conf_path(NULL, confp, sizeof confp);
+    if (conf_refused(confp, (unsigned)getuid()))
+        return 1;
+    nineshare_conf_init(&c);
+    if (p9_file_exists(confp))
+        nineshare_conf_parse(confp, &c);
+    for (i = 0; i < c.nimports; i++)
+        if (!strcmp(c.imports[i].name, argv[0])) {
+            if (p9_block_remove(confp, "import", argv[0], c.imports[i].line) == 0) {
+                p9_reload_serve();
+                printf("no longer importing '%s' (a mount of that name here is still configured: sudo 9share unmount %s)\n", argv[0], argv[0]);
+                rc = 0;
+            } else
+                fail("cannot change %s", confp);
+            break;
+        }
+    if (i == c.nimports)
+        fail("no import named '%s'", argv[0]);
     nineshare_conf_free(&c);
     return rc;
 }
@@ -187,6 +277,7 @@ int cmd_mount(int argc, char **argv)
     if (p9_block_append(confp, text) < 0)
         return fail("cannot write %s", confp);
     p9_mkdir_p(at, 0755);
+    p9_reload_daemon();
     printf("'%s' of %s will be shown at %s as soon as the exporter's tunnel is up\n", argv[1], argv[0], at);
     if (p9_daemon_pid() <= 0 && !p9_lock_held("/run/9share.lock"))
         printf("(the daemon is not running: to start it now and at every boot, run  sudo %s/9share-init enable)\n", NINESHARE_LIBEXECDIR);
@@ -215,6 +306,7 @@ int cmd_unmount(int argc, char **argv)
         if (!strcmp(c.mounts[i].name, argv[0])) {
             p9_unmount(c.mounts[i].at);
             if (p9_block_remove(confp, "mount", argv[0], c.mounts[i].line) == 0) {
+                p9_reload_daemon();
                 printf("unmounted %s\n", c.mounts[i].at);
                 rc = 0;
             } else
@@ -306,6 +398,11 @@ int cmd_status(void)
     for (i = 0; i < c.nexports; i++) {
         snprintf(sockp, sizeof sockp, "%s/%s/daud.log", state, c.exports[i].name);
         printf("  %-14s %s -> %s   %s\n", c.exports[i].name, c.exports[i].directory, c.exports[i].host, link_state(sockp));
+    }
+    for (i = 0; i < c.nimports; i++) {
+        if (i == 0)
+            printf("imported by you:\n");
+        printf("  %-14s %s:%s   (ssh runs while the mount of that name is wanted)\n", c.imports[i].name, c.imports[i].host, c.imports[i].directory);
     }
     nineshare_conf_free(&c);
     p9_system_conf_path(confp, sizeof confp);
@@ -449,6 +546,33 @@ int cmd_shutdown(int argc, char **argv)
     if (need_root("shutdown"))
         return 1;
     return daemon_stop(force);
+}
+
+/* reload: make the running programs read their configuration again.  The commands that edit it do this themselves; this is for a
+ * file that was edited by hand.  As an ordinary user: that user's exports and imports (9share serve).  As root: the daemon, which
+ * re-reads /etc/9share/9share.conf (the mounts) and has the serves it started read their files too. */
+int cmd_reload(int argc, char **argv)
+{
+    int did = 0, root = geteuid() == 0 || getenv("NINESHARE_RUNDIR");
+    (void)argv;
+    if (argc != 0) {
+        fprintf(stderr, "usage: 9share reload\n");
+        return 2;
+    }
+    if (p9_reload_serve()) {
+        printf("9share: asked your exports and imports (9share serve) to read %s again\n", "~/.config/9share/9share.conf");
+        did++;
+    }
+    if (root && p9_reload_daemon()) {
+        printf("9share: asked the daemon to read %s again\n", "/etc/9share/9share.conf");
+        did++;
+    }
+    if (!did) {
+        if (root)
+            return fail("%s", "nothing to reload: the daemon is not running (sudo " NINESHARE_LIBEXECDIR "/9share-init enable)");
+        return fail("%s", "nothing to reload: 9share serve is not running for you (the daemon starts it within ten seconds of a configuration file appearing); the mounts are the daemon's: sudo 9share reload");
+    }
+    return 0;
 }
 
 int cmd_restart(int argc, char **argv)

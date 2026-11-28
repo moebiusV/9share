@@ -51,10 +51,14 @@ export "two" {
 	host "second.example.org"
 }
 EOC
+sleep 3
+check "an edited file is not looked at until asked: the new export is not started yet" '! grep -qx "second.example.org 9share link two" "$T/ssh.log" 2>/dev/null'
+check "9share reload asks serve to read it again" '"$BIN" reload >/dev/null'
 check "a new export is started" 'waitfor "grep -qx \"second.example.org 9share link two\" \"$T/ssh.log\" 2>/dev/null"'
 
 # a block removed from the file is stopped; the other stays
 sed -i '/^export "two" {/,/^}/d' "$HOME/.config/9share/9share.conf"
+"$BIN" reload >/dev/null
 check "a removed export is stopped" 'waitfor "! pgrep -f -- \"second.example.org 9share link two\" >/dev/null"'
 check "the one that stays is still up" 'pgrep -f -- "other.example.org 9share link one" >/dev/null'
 
@@ -80,6 +84,7 @@ export "bad" {
 	host "third.example.org"
 }
 EOC
+"$BIN" reload >/dev/null
 sleep 3
 check "a block with a mistake is not started" '! pgrep -f -- "third.example.org" >/dev/null'
 check "and the mistake is reported with its place" 'grep -q "9share.conf:[0-9]*: " "$T/serve.log"'

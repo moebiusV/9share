@@ -294,7 +294,7 @@ int p9_proc_alive(int pid)
 /* Is PID a `9share boot`?  Its command line has an argument whose last part is 9share, followed by "boot" (a script run through an
  * interpreter has the interpreter's name first, so the first argument is not the one to look at).  A pid from a file is never trusted
  * without this: after a reboot the number belongs to something else, and that must not be sent a signal. */
-static int is_boot_process(int pid)
+static int is_9share_cmd(int pid, const char *word)
 {
     char path[64], buf[4096], *p, *end;
     ssize_t n;
@@ -313,10 +313,39 @@ static int is_boot_process(int pid)
         base = base ? base + 1 : p;
         if (!strcmp(base, "9share")) {
             char *next = p + strlen(p) + 1;
-            return next < end && !strcmp(next, "boot");
+            return next < end && !strcmp(next, word);
         }
     }
     return 0;
+}
+
+static int is_boot_process(int pid) { return is_9share_cmd(pid, "boot"); }
+
+/* this user's `9share serve`: its pid is in the state directory, and is not trusted unless that process is a 9share serve */
+int p9_serve_pid(void)
+{
+    char state[P9_LINE], path[P9_LINE + 16], *txt;
+    long v = 0;
+    p9_state_dir(state, sizeof state);
+    snprintf(path, sizeof path, "%s/serve.pid", state);
+    if ((txt = p9_read_file(path, NULL))) {
+        v = strtol(txt, NULL, 10);
+        free(txt);
+    }
+    return v > 1 && p9_proc_alive((int)v) && is_9share_cmd((int)v, "serve") ? (int)v : 0;
+}
+
+/* ask them to read their configuration again (SIGHUP); 1 if there was one to ask */
+int p9_reload_serve(void)
+{
+    int pid = p9_serve_pid();
+    return pid > 0 && kill(pid, SIGHUP) == 0;
+}
+
+int p9_reload_daemon(void)
+{
+    int pid = p9_daemon_pid();
+    return pid > 0 && kill(pid, SIGHUP) == 0;
 }
 
 int p9_daemon_pid(void)

@@ -1,3 +1,17 @@
+2026-11-28  David Walther
+
+	* src/serve.c, boot.c, util.c, cmds.c, main.c: `9share reload` and SIGHUP.  serve and the daemon read their configuration at start, on SIGHUP and
+	when the file's trust changes (a permission check each pass), not by comparing mtimes; the daemon scans for users with a file at the start,
+	on a reload and every ten seconds.  export, unexport, import, unimport, mount and unmount signal the right program themselves.  serve writes
+	serve.pid.  systemd/9share.service ExecReload, debian/9share.init reload.  tests/test_serve.sh: an edit is not noticed until reload.
+	* src/relay.c, serve.c, cmds.c, conf.c, grammars/9share.hbnf (src/9share_conf.c regenerated): imports.  `import` blocks, `9share import` and
+	`unimport`; `9share serve` runs ssh for each import with the mount's relay socket as its standard input and output; `9share offer NAME DIR`
+	(run by ssh on the machine with the files) listens on ~/.9share/NAME.offer, starts a detached daud there if none runs for the request, and
+	joins ssh to the carrier that daud makes with `9share carry NAME`; a newer offer ends an older one whose ssh is gone.  NINESHARE_SERVE_DELAY_MAX
+	is for the tests.
+	* daud/src/cmd/diod.c, libdiod/diod_link.c: --once (end with the session, or when no carrier came up within the hold time).
+	* tests/test_import.sh: test_resume's read and write of sixteen megabytes with the stand-in ssh cut 25 times, with and without a secret.
+
 2026-11-26  David Walther
 
 	* daud/src/liblink/: the resumable link engine (link.c: frames HELLO, AUTH, STATUS, DATA, ACK, CLOSE; session ids; replay buffers; hold time)

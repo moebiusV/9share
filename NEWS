@@ -1,6 +1,12 @@
 9share NEWS -- history of user-visible changes
 
 * Unreleased (after 0.1.0; the version number is not yet chosen)
+  9share reload: the configuration is read at start and when asked (SIGHUP; the commands that edit it ask for it), no longer looked at
+  every second or half second.  As a user it re-reads the exports and imports, with sudo the mounts; nothing is taken down.  systemd
+  ExecReload and the init script's reload do the same.  The root daemon looks for users with a configuration file every ten seconds.
+  9share import HOST DIR [NAME] / unimport: the other direction.  The machine that shows the files runs ssh to the machine that has them
+  (which needs no ssh server of its own to be reached from here, nor an open port); there `9share offer` starts daud (new option
+  --once), which dials back through the same ssh.  Same mount, same resumable link, same secret.
   The connection survives a broken ssh: daud and the receiving relay keep a resumable link (the bytes each end has not had
   acknowledged are resent over the next ssh), so the mount and its open files wait for it up to the new `hold` setting (1 to 86400
   seconds, default 600) and the mount is removed only after that.  ssh -R and the NAME.sock / NAME.info files are gone; both machines

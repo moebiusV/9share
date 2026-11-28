@@ -26,11 +26,17 @@ That is all of it.  The rest is optional:
     9share ro projects        read-only (as that account, no sudo)
     9share rw projects        read-write
     9share off projects       not mounted
+    9share reload             read the configuration again (the commands do it for
+                              themselves; this is for a hand-edited file)
     9share status             what is shared, what is mounted, what is running
     9share pair projects bob.example.org
                               make a secret on both machines, so that each connection
                               proves it as well as trusting ssh (needs 9share on bob)
     9share unexport projects  stop sharing
+    9share import bob.example.org projects
+                              the other way round, when bob cannot be dialled: show
+                              bob's directory here (this machine runs ssh; the same
+                              sudo 9share mount here, then on both machines 9share)
 
 Several directories, several machines, and both directions at once are each one more block
 of configuration.  The configuration is two small files in obconf, the notation of the

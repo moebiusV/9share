@@ -29,6 +29,9 @@ restart|force-reload)
     "$0" stop
     "$0" start
     ;;
+reload)
+    start-stop-daemon --stop --quiet --signal HUP --pidfile "$PIDFILE"
+    ;;
 status)
     if start-stop-daemon --status --pidfile "$PIDFILE"; then
         echo "9share is running"
@@ -38,7 +41,7 @@ status)
     fi
     ;;
 *)
-    echo "Usage: $0 {start|stop|restart|force-reload|status}" >&2
+    echo "Usage: $0 {start|stop|restart|force-reload|reload|status}" >&2
     exit 2
     ;;
 esac

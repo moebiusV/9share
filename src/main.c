@@ -17,6 +17,8 @@ static void usage(FILE *f)
           "  the machine that has the files (as yourself, no sudo):\n"
           "    9share export DIR HOST [NAME]    share DIR with HOST under NAME (default: the directory's name)\n"
           "    9share unexport NAME             stop sharing it\n"
+          "    9share import HOST DIR [NAME]    the other way round: show HOST's DIR here (this machine's ssh dials out; needs the mount below)\n"
+          "    9share unimport NAME             stop importing it\n"
           "    9share pair NAME HOST            make one secret for NAME and put it on both machines (SCRAM on every connection)\n"
           "\n"
           "  the machine that shows the files:\n"
@@ -28,6 +30,7 @@ static void usage(FILE *f)
           "  either:\n"
           "    9share status                    what is shared, what is mounted, what is running\n"
           "    sudo 9share shutdown [--force]   stop the daemon (its mounts and exports end with it)\n"
+          "    9share reload                    read the configuration again (yourself: your exports and imports; sudo: the mounts); the commands do it themselves, this is for a hand-edited file\n"
           "    sudo 9share restart              shutdown, then start it again\n"
           "    sudo 9share readahead [off|on|KB]  how far ahead reads are made, now (no restart); with no argument: what it is\n"
           "    sudo 9share wsl-boot [--remove]  start 9share at boot on WSL2 (no systemd there)\n"
@@ -49,6 +52,8 @@ int main(int argc, char **argv)
     if (!strcmp(c, "--version") || !strcmp(c, "version")) { puts("9share " NINESHARE_VERSION); return 0; }
     if (!strcmp(c, "export")) return cmd_export(argc, argv);
     if (!strcmp(c, "unexport")) return cmd_unexport(argc, argv);
+    if (!strcmp(c, "import")) return cmd_import(argc, argv);
+    if (!strcmp(c, "unimport")) return cmd_unimport(argc, argv);
     if (!strcmp(c, "mount")) return cmd_mount(argc, argv);
     if (!strcmp(c, "unmount")) return cmd_unmount(argc, argv);
     if (!strcmp(c, "rw") || !strcmp(c, "ro") || !strcmp(c, "off")) return cmd_mode(c, argc, argv);
@@ -67,10 +72,13 @@ int main(int argc, char **argv)
     if (!strcmp(c, "wsl-boot")) return cmd_wsl_boot(argc, argv);
     if (!strcmp(c, "shutdown")) return cmd_shutdown(argc, argv);
     if (!strcmp(c, "restart")) return cmd_restart(argc, argv);
+    if (!strcmp(c, "reload")) return cmd_reload(argc, argv);
     if (!strcmp(c, "readahead")) return cmd_readahead(argc, argv);
     if (!strcmp(c, "serve")) return p9_serve();
     if (!strcmp(c, "relay")) return p9_relay(argc, argv);
     if (!strcmp(c, "link")) return p9_link(argc, argv);
+    if (!strcmp(c, "offer")) return p9_offer(argc, argv);
+    if (!strcmp(c, "carry")) return p9_carry(argc, argv);
     if (!strcmp(c, "boot")) return p9_boot(argc == 1 && !strcmp(argv[0], "--detach"));
     fprintf(stderr, "9share: unknown command '%s' (9share help)\n", c);
     return 2;

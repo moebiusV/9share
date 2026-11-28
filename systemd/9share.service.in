@@ -5,6 +5,7 @@ Wants=network-online.target
 
 [Service]
 ExecStart=__BINDIR__/9share boot
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=5
 

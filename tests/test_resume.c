@@ -1,4 +1,8 @@
-/* test_resume.c -- the whole receiving side, short of the kernel: a daud that dials out, a relay that accepts, a socket pair standing
+/* With NINESHARE_TEST_IMPORT set the other direction is tested instead (an import): `9share serve` runs a stand-in for ssh that runs
+ * `9share offer` on this machine (the two "machines" share a home directory; the files they keep there have different names), offer
+ * starts daud (--once), and what is cut is the stand-in ssh: serve runs it again, a new offer is joined to the daud that is still there.
+ *
+ * test_resume.c -- the whole receiving side, short of the kernel: a daud that dials out, a relay that accepts, a socket pair standing
  * in for the kernel's end of the mount, and a client that reads and writes tens of megabytes while the carrier (the process that
  * ssh would be) is killed again and again.  Nothing may be lost, repeated or reordered; and when the relay itself is replaced,
  * daud's session ends and a new one carries on. */
@@ -19,6 +23,8 @@
 static char dir[96], home[128], etc[128], share[160], pidfile[160], dlog[160];
 static const char *bin, *daud;
 static char secretf[400];                          /* set when NINESHARE_TEST_SECRET asks for SCRAM on this run */
+
+static int import_mode;                            /* NINESHARE_TEST_IMPORT: serve and offer, instead of daud directly */
 
 static uint8_t pat(uint64_t i) { return (uint8_t)((i * 2654435761u) >> 11); }
 
@@ -41,9 +47,34 @@ static pid_t start_relay(int kr, int ctl_w)
     return pid;
 }
 
-static pid_t start_daud(void)
+static pid_t start_serve(void)
 {
     pid_t pid = fork();
+    if (pid == 0) {
+        char p[600], st[300];
+        int dn = open("/dev/null", O_RDWR), lf = open(dlog, O_WRONLY | O_CREAT | O_APPEND, 0600);
+        dup2(dn, 0); dup2(lf, 1); dup2(lf, 2);
+        setenv("HOME", home, 1);
+        unsetenv("XDG_CONFIG_HOME");
+        snprintf(st, sizeof st, "%s/state", dir);
+        setenv("XDG_STATE_HOME", st, 1);
+        snprintf(p, sizeof p, "%s/bin:%s", dir, getenv("PATH") ? getenv("PATH") : "/usr/bin:/bin");
+        setenv("PATH", p, 1);
+        setenv("NINESHARE_DAUD", daud, 1);
+        setenv("CARRIER_LOG", pidfile, 1);
+        setenv("NINESHARE_SERVE_DELAY_MAX", "1", 1);          /* the ssh that is cut is run again at once, not after 1, 2, 4 ... seconds */
+        execl(bin, "9share", "serve", (char *)NULL);
+        _exit(127);
+    }
+    return pid;
+}
+
+static pid_t start_daud(void)
+{
+    pid_t pid;
+    if (import_mode)
+        return start_serve();
+    pid = fork();
     if (pid == 0) {
         char cmd[400], uid[16];
         int dn = open("/dev/null", O_RDWR), lf = open(dlog, O_WRONLY | O_CREAT | O_APPEND, 0600);
@@ -137,7 +168,8 @@ int main(void)
     snprintf(home, sizeof home, "%s/home", dir);
     snprintf(share, sizeof share, "%s/share", dir);
     snprintf(pidfile, sizeof pidfile, "%s/carriers", dir);
-    snprintf(dlog, sizeof dlog, "%s/daud.log", dir);
+    import_mode = getenv("NINESHARE_TEST_IMPORT") != NULL;
+    snprintf(dlog, sizeof dlog, import_mode ? "%s/home/.9share/t.daud.log" : "%s/daud.log", dir);
     snprintf(etc, sizeof etc, "%s/etc", dir);
     mkdir(dir, 0700); mkdir(home, 0700); mkdir(share, 0700); mkdir(etc, 0700);
     if (getenv("NINESHARE_TEST_SECRET")) {          /* both ends read the same secret: daud from this file, the relay from HOME */
@@ -150,6 +182,31 @@ int main(void)
         CHECK(sf != NULL);
         if (sf) { fputs("a secret for the test\n", sf); fclose(sf); }
         CHECK(chmod(secretf, 0600) == 0);
+    }
+    if (import_mode) {
+        char d[300];
+        FILE *cf;
+        snprintf(d, sizeof d, "%s/bin", dir); mkdir(d, 0700);
+        snprintf(d, sizeof d, "%s/bin/ssh", dir);
+        cf = fopen(d, "w");
+        CHECK(cf != NULL);
+        if (cf) {            /* ssh HOST COMMAND...: run the command here, as itself, so that cutting it is cutting ssh */
+            fputs("#!/bin/sh\nwhile [ $# -gt 0 ]; do case $1 in -o) shift 2;; -T) shift;; *) break;; esac; done\nshift; shift\n"
+                  "echo $$ >> \"$CARRIER_LOG\"\nexec \"$NINESHARE_BIN\" \"$@\"\n", cf);
+            fclose(cf);
+        }
+        CHECK(chmod(d, 0700) == 0);
+        snprintf(d, sizeof d, "%s/.config", home); mkdir(d, 0700);
+        snprintf(d, sizeof d, "%s/.config/9share", home); mkdir(d, 0700);
+        snprintf(d, sizeof d, "%s/.9share", home); mkdir(d, 0700);
+        snprintf(d, sizeof d, "%s/.config/9share/9share.conf", home);
+        cf = fopen(d, "w");
+        CHECK(cf != NULL);
+        if (cf) {
+            fprintf(cf, "import \"t\" {\n\tdirectory \"%s\"\n\thost \"other.example.org\"\n\thold 40\n}\n", share);
+            fclose(cf);
+        }
+        CHECK(chmod(d, 0600) == 0);
     }
     snprintf(path, sizeof path, "%s/big.bin", share);
     f = fopen(path, "w");
@@ -262,9 +319,23 @@ int main(void)
 
     kill(dd, SIGTERM); waitpid(dd, NULL, 0);
     kill(relay2, SIGTERM); waitpid(relay2, NULL, 0);
+    if (import_mode) {                              /* the daud that offer started is not serve's child: end it by its record */
+        char pf[300];
+        FILE *pidf;
+        long dp = 0;
+        snprintf(pf, sizeof pf, "%s/.9share/t.daud.pid", home);
+        if ((pidf = fopen(pf, "r"))) {
+            if (fscanf(pidf, "%ld", &dp) != 1)
+                dp = 0;
+            fclose(pidf);
+        }
+        CHECK(dp > 1);                              /* offer started it, and wrote who it is */
+        if (dp > 1)
+            kill((pid_t)dp, SIGTERM);
+    }
     if (t_failed) {
         char cmd[300];
-        fprintf(stderr, "--- daud's log ---\n");
+        fprintf(stderr, "--- the log (serve's, or daud's) ---\n");
         snprintf(cmd, sizeof cmd, "tail -30 %s >&2", dlog);
         if (system(cmd) != 0) {}
     }

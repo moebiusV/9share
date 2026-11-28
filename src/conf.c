@@ -50,6 +50,22 @@ int nineshare_valid_path(const char *s)
     return 1;
 }
 
+int nineshare_valid_rpath(const char *s)
+{
+    size_t i, n = strlen(s);
+    if (s[0] == '/')
+        return nineshare_valid_path(s);
+    if (n == 0 || n > 1024 || s[n - 1] == '/')
+        return 0;
+    for (i = 0; i < n; i++) {
+        if (!alnum((unsigned char)s[i]) && !strchr("._+@-/", s[i]))
+            return 0;
+        if ((i == 0 || s[i - 1] == '/') && (s[i] == '/' || (s[i] == '.' && s[i + 1] == '.' && (s[i + 2] == '/' || s[i + 2] == '\0'))))
+            return 0;
+    }
+    return 1;
+}
+
 static int grow(void **base, size_t *n, size_t size)
 {
     void *p = realloc(*base, (*n + 1) * size);
@@ -76,6 +92,26 @@ const char *nineshare_conf_add_export(struct nineshare_conf *c, const struct nin
     if (grow((void **)&c->exports, &c->nexports, sizeof *c->exports) < 0)
         return "out of memory";
     c->exports[c->nexports++] = *e;
+    return NULL;
+}
+
+const char *nineshare_conf_add_import(struct nineshare_conf *c, const struct nineshare_import *e)
+{
+    size_t i;
+    if (!nineshare_valid_name(e->name))
+        return "the name of an import is letters, digits and . _ - (not starting with . _ -)";
+    if (e->directory == NULL || e->host == NULL)
+        return "an import needs a directory and a host";
+    if (!nineshare_valid_rpath(e->directory))
+        return "the directory must be a path of letters, digits and . _ + @ - / (no spaces, no ..), absolute or relative to the home of the account on the host";
+    if (!nineshare_valid_host(e->host))
+        return "the host must be a name as ssh knows it (letters, digits and . _ @ : -)";
+    for (i = 0; i < c->nimports; i++)
+        if (strcmp(c->imports[i].name, e->name) == 0)
+            return "there is already an import with this name";
+    if (grow((void **)&c->imports, &c->nimports, sizeof *c->imports) < 0)
+        return "out of memory";
+    c->imports[c->nimports++] = *e;
     return NULL;
 }
 

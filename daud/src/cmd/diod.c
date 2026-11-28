@@ -95,6 +95,7 @@ static const struct option longopts[] = {
     {"dial",               required_argument,  0, 0x100},
     {"hold",               required_argument,  0, 0x101},
     {"link-secret-file",   required_argument,  0, 0x102},
+    {"once",               no_argument,        0, 0x103},
     {0, 0, 0, 0},
 };
 
@@ -125,6 +126,8 @@ usage()
 "   --dial COMMAND          serve one export over a resumable link: run COMMAND (with its\n"
 "                           stdin and stdout as the link) and again when it dies\n"
 "   --hold SECONDS          how long a connection waits for a new carrier (default 600)\n"
+"   --once                  with --dial: end when the session ends (or no carrier comes up in HOLD\n"
+"                           seconds) instead of beginning another\n"
 "   --link-secret-file FILE authenticate the link with SCRAM-SHA-256, the secret in FILE\n"
 "   -v,--version            show daud version and configuration information\n"
     );
@@ -197,6 +200,9 @@ main(int argc, char **argv)
                 dial_hold = (int)strtol (optarg, NULL, 10);
                 if (dial_hold < 1)
                     msg_exit ("--hold wants a number of seconds");
+                break;
+            case 0x103: /* --once */
+                diod_link_once = 1;
                 break;
             case 0x102: /* --link-secret-file FILE */
                 link_secret = _read_secret (optarg);

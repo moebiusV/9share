@@ -29,6 +29,8 @@
 
 static volatile sig_atomic_t stopping;
 
+static volatile sig_atomic_t reload;
+static void on_hup(int sig) { (void)sig; reload = 1; }
 static void on_term(int sig) { (void)sig; stopping = 1; }
 
 const char *p9_mount_state_name(int s)
@@ -349,7 +351,8 @@ int p9_boot(int detach)
     struct mstate mst[MAXMOUNTS];
     pid_t kids[64];
     uid_t kid_uid[64];
-    int nkids = 0, lk, i;
+    int nkids = 0, lk, i, ticks = 0, have_cur = 0, last_tr = 2;
+    struct nineshare_conf c;                        /* the configuration as last read: at the start, on SIGHUP, or when the file's trust changed */
     char pidp[P9_LINE];
     char **managed = NULL;
     size_t nmanaged = 0, k;
@@ -386,7 +389,10 @@ int p9_boot(int detach)
     sa.sa_handler = on_term;
     sigaction(SIGTERM, &sa, NULL);
     sigaction(SIGINT, &sa, NULL);
+    sa.sa_handler = on_hup;
+    sigaction(SIGHUP, &sa, NULL);
     signal(SIGPIPE, SIG_IGN);
+    nineshare_conf_init(&c);
     {
         char *modprobe_9pnet[] = { "modprobe", "9pnet_fd", NULL }, *modprobe_9p[] = { "modprobe", "9p", NULL };
         p9_run(modprobe_9pnet, 20, NULL, 0);
@@ -398,10 +404,10 @@ int p9_boot(int detach)
 
     while (!stopping) {
         struct passwd *pw;
-        struct nineshare_conf c;
         size_t j;
+        int do_reload = reload, scan;
+        reload = 0;                                 /* before reading: a SIGHUP that comes while we read asks again */
 
-        /* each user who has exports gets a `9share serve`, unless one runs (maybe started by hand) */
         for (i = 0; i < nkids; ) {
             int st;
             if (waitpid(kids[i], &st, WNOHANG) == kids[i]) {
@@ -410,8 +416,14 @@ int p9_boot(int detach)
             } else
                 i++;
         }
+        if (do_reload)                              /* the serves this daemon started read their files again too */
+            for (i = 0; i < nkids; i++)
+                kill(kids[i], SIGHUP);
+        /* each user who has exports gets a `9share serve`, unless one runs: looked for at the start, on a reload, and every ten seconds
+         * (a serve that died is started again, and a user's first export is found, without any signal: only the root daemon can start it) */
+        scan = do_reload || ticks++ % 20 == 0;
         setpwent();
-        while ((pw = getpwent()) != NULL) {
+        while (scan && (pw = getpwent()) != NULL) {
             char upath[PB], lockp[PB];
             int have = 0;
             if (pw->pw_uid < 1000 || pw->pw_uid >= 65534 || !pw->pw_dir || pw->pw_dir[0] != '/')
@@ -433,18 +445,27 @@ int p9_boot(int detach)
         endpwent();
 
         /* the mounts */
-        nineshare_conf_init(&c);
-        {   /* a file that others could have changed says nothing: no mounts, and what was mounted is taken down (the reason is logged once) */
+        {   /* a file that others could have changed says nothing: no mounts, and what was mounted is taken down (the reason is logged once);
+             * its permissions are looked at on every pass, its contents only when asked (SIGHUP) */
             static char lastwhy[P9_LINE + 256];
             char why[P9_LINE + 256];
             int tr = p9_conf_trust(confp, 0, why, sizeof why);
-            if (tr == 0)
-                nineshare_conf_parse(confp, &c);
-            if (tr < 0 && strcmp(why, lastwhy) != 0)
-                p9_log("%s is not used: %s", confp, why);
-            if (tr >= 0 && lastwhy[0])
-                p9_log("%s is used again", confp);
-            snprintf(lastwhy, sizeof lastwhy, "%s", tr < 0 ? why : "");
+            if (!have_cur || do_reload || tr != last_tr) {
+                if (have_cur)
+                    nineshare_conf_free(&c);
+                nineshare_conf_init(&c);
+                if (tr == 0)
+                    nineshare_conf_parse(confp, &c);
+                have_cur = 1;
+                last_tr = tr;
+                if (tr < 0 && strcmp(why, lastwhy) != 0)
+                    p9_log("%s is not used: %s", confp, why);
+                if (tr >= 0 && lastwhy[0])
+                    p9_log("%s is used again", confp);
+                snprintf(lastwhy, sizeof lastwhy, "%s", tr < 0 ? why : "");
+                if (do_reload)
+                    p9_log("read %s again", confp);
+            }
         }
         for (j = 0; j < c.nmounts; j++) {
             struct mstate *ms = state_of(mst, c.mounts[j].name);
@@ -470,8 +491,7 @@ int p9_boot(int detach)
         nmanaged = managed ? c.nmounts : 0;
         for (k = 0; k < nmanaged; k++)
             managed[k] = strdup(c.mounts[k].name);
-        nineshare_conf_free(&c);
-        for (i = 0; i < 5 && !stopping; i++)
+        for (i = 0; i < 5 && !stopping && !reload; i++)
             usleep(100000);
     }
     /* shutting down: the relays end, the mounts go */
@@ -490,6 +510,7 @@ int p9_boot(int detach)
                 p9_unmount(c2.mounts[k].at);
         nineshare_conf_free(&c2);
     }
+    nineshare_conf_free(&c);
     for (k = 0; k < nmanaged; k++)
         free(managed[k]);
     free(managed);

@@ -111,6 +111,10 @@ The command is run by the shell and is killed when daud ends.
 .I "--hold SECONDS"
 With \fB--dial\fR: how long the connection waits for a new carrier before the session is given up (default 600).
 .TP
+.I "--once"
+With \fB--dial\fR: end when the session ends, or when no carrier has come up within the hold time, instead of beginning another session.  9share
+starts daud this way on the exporting machine when the importer connects (\fB9share offer\fR).
+.TP
 .I "--link-secret-file FILE"
 With \fB--dial\fR: make the link prove a shared secret, the first line of FILE, on every carrier, with SCRAM-SHA-256 (RFC 7677;
 no channel binding; each end proves the secret to the other).  FILE must be readable by its owner alone.  Without it the link trusts

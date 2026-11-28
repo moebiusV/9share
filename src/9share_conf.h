@@ -17,6 +17,14 @@ struct nineshare_export {
     size_t  line;                       /* the line of the file the block starts on */
 };
 
+/* import "NAME" { directory DIR  host HOST  [hold SECONDS] }: HOST's directory DIR (absolute, or relative to its home) is shown here by a
+ * mount block of the same NAME; this machine's ssh dials out, as a user of HOST */
+struct nineshare_import {
+    char   *name, *directory, *host;
+    int     hold;
+    size_t  line;
+};
+
 /* mount "NAME" { user USER  at MOUNTPOINT  [hold SECONDS]  [access owner|any] } */
 struct nineshare_mount {
     char   *name, *user, *at;
@@ -30,6 +38,8 @@ struct nineshare_conf {
     size_t                 nexports;
     struct nineshare_mount  *mounts;
     size_t                 nmounts;
+    struct nineshare_import *imports;
+    size_t                 nimports;
 };
 
 void nineshare_conf_init(struct nineshare_conf *c);
@@ -43,6 +53,7 @@ int nineshare_conf_parse(const char *path, struct nineshare_conf *c);
 /* Used by the parser's actions: take the block (which becomes the conf's) after checking it.  NULL
  * when it was taken, else the message; the block is then the caller's to free. */
 const char *nineshare_conf_add_export(struct nineshare_conf *c, const struct nineshare_export *e);
+const char *nineshare_conf_add_import(struct nineshare_conf *c, const struct nineshare_import *e);
 const char *nineshare_conf_add_mount(struct nineshare_conf *c, const struct nineshare_mount *m);
 
 /* What may go where: a name is letters, digits and . _ - (not first: . _ -); a user is a login
@@ -53,5 +64,6 @@ int nineshare_valid_name(const char *s);
 int nineshare_valid_user(const char *s);
 int nineshare_valid_host(const char *s);
 int nineshare_valid_path(const char *s);
+int nineshare_valid_rpath(const char *s);   /* a path as an import gives it: valid_path, or relative (to the remote home), no ".." */
 
 #endif /* NINESHARE_CONF_H */

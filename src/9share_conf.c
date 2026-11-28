@@ -193,6 +193,9 @@ static void free_arena(void) {
 typedef struct config_s config_t;
  TAILQ_HEAD(config_list, config_s) ;
 typedef struct entry_s entry_t;
+typedef struct importopts_s importopts_t;
+ TAILQ_HEAD(importopts_list, importopts_s) ;
+typedef struct importopt_s importopt_t;
 typedef struct exportopts_s exportopts_t;
  TAILQ_HEAD(exportopts_list, exportopts_s) ;
 typedef struct exportopt_s exportopt_t;
@@ -252,14 +255,27 @@ typedef const char * string_t;
 
 typedef enum {
     ENTRY_EXPORT,   /* export */
+    ENTRY_IMPORT,   /* import */
     ENTRY_MOUNT   /* mount */
 } entry_kind_t;
 struct entry_s {
     entry_kind_t kind;
     string_t string;
     struct exportopts_list exportopts;
+    struct importopts_list importopts;
     struct mountopts_list mountopts;
     size_t _line;   /* for bind_error */
+};
+
+typedef enum {
+    IMPORTOPT_DIRECTORY,   /* directory */
+    IMPORTOPT_HOST,   /* host */
+    IMPORTOPT_HOLD   /* hold */
+} importopt_kind_t;
+struct importopt_s {
+    importopt_kind_t kind;
+    string_t string;
+    long long hyper_int;
 };
 
 typedef enum {
@@ -290,6 +306,11 @@ struct config_s {
     entry_t entry;
 };
 
+struct importopts_s {
+     TAILQ_ENTRY(importopts_s) _link ;
+    importopt_t importopt;
+};
+
 struct exportopts_s {
      TAILQ_ENTRY(exportopts_s) _link ;
     exportopt_t exportopt;
@@ -304,6 +325,8 @@ struct mountopts_s {
 typedef enum {
     NODE_CONFIG,
     NODE_ENTRY,
+    NODE_IMPORTOPTS,
+    NODE_IMPORTOPT,
     NODE_EXPORTOPTS,
     NODE_EXPORTOPT,
     NODE_MOUNTOPTS,
@@ -317,6 +340,10 @@ static void __attribute__((unused)) visit_config(const struct config_list *, vis
 static void __attribute__((unused)) map_config(struct config_list *, map_fn f, void *ctx);
 static void __attribute__((unused)) visit_entry(const entry_t *, visit_fn f, void *ctx);
 static void __attribute__((unused)) map_entry(entry_t *, map_fn f, void *ctx);
+static void __attribute__((unused)) visit_importopts(const struct importopts_list *, visit_fn f, void *ctx);
+static void __attribute__((unused)) map_importopts(struct importopts_list *, map_fn f, void *ctx);
+static void __attribute__((unused)) visit_importopt(const importopt_t *, visit_fn f, void *ctx);
+static void __attribute__((unused)) map_importopt(importopt_t *, map_fn f, void *ctx);
 static void __attribute__((unused)) visit_exportopts(const struct exportopts_list *, visit_fn f, void *ctx);
 static void __attribute__((unused)) map_exportopts(struct exportopts_list *, map_fn f, void *ctx);
 static void __attribute__((unused)) visit_exportopt(const exportopt_t *, visit_fn f, void *ctx);
@@ -346,14 +373,42 @@ static void visit_entry(const entry_t *n, visit_fn f, void *ctx) {
     if (!n) return;
     f(n, NODE_ENTRY, ctx);
     visit_exportopts(&n->exportopts, f, ctx);
+    visit_importopts(&n->importopts, f, ctx);
     visit_mountopts(&n->mountopts, f, ctx);
 }
 
 static void map_entry(entry_t *n, map_fn f, void *ctx) {
     if (!n) return;
     map_exportopts(&n->exportopts, f, ctx);
+    map_importopts(&n->importopts, f, ctx);
     map_mountopts(&n->mountopts, f, ctx);
     f(n, NODE_ENTRY, ctx);
+}
+
+static void visit_importopts(const struct importopts_list *head, visit_fn f, void *ctx) {
+    const importopts_t *n;
+     TAILQ_FOREACH(n, head, _link)  {
+        f(n, NODE_IMPORTOPTS, ctx);
+        visit_importopt(&n->importopt, f, ctx);
+    }
+}
+
+static void map_importopts(struct importopts_list *head, map_fn f, void *ctx) {
+    importopts_t *n;
+     TAILQ_FOREACH(n, head, _link)  {
+        map_importopt(&n->importopt, f, ctx);
+        f(n, NODE_IMPORTOPTS, ctx);
+    }
+}
+
+static void visit_importopt(const importopt_t *n, visit_fn f, void *ctx) {
+    if (!n) return;
+    f(n, NODE_IMPORTOPT, ctx);
+}
+
+static void map_importopt(importopt_t *n, map_fn f, void *ctx) {
+    if (!n) return;
+    f(n, NODE_IMPORTOPT, ctx);
 }
 
 static void visit_exportopts(const struct exportopts_list *head, visit_fn f, void *ctx) {
@@ -415,6 +470,10 @@ static void free_config_nodes(struct config_list *head);
 static void free_config(struct config_list *head);
 static void free_entry_fields(entry_t *n);
 static void free_entry(entry_t *n);
+static void free_importopts_fields(importopts_t *n);
+static void free_importopts(struct importopts_list *head);
+static void free_importopt_fields(importopt_t *n);
+static void free_importopt(importopt_t *n);
 static void free_exportopts_fields(exportopts_t *n);
 static void free_exportopts(struct exportopts_list *head);
 static void free_exportopt_fields(exportopt_t *n);
@@ -446,12 +505,37 @@ static void free_config(struct config_list *head) {
 static void free_entry_fields(entry_t *n) {
     if (!n) return;
     free_exportopts(&n->exportopts);
+    free_importopts(&n->importopts);
     free_mountopts(&n->mountopts);
 }
 
 static void free_entry(entry_t *n) {
     if (!n) return;
     free_entry_fields(n);
+}
+
+static void free_importopts_fields(importopts_t *n) {
+    if (!n) return;
+    free_importopt(&n->importopt);
+}
+
+static void free_importopts(struct importopts_list *head) {
+    importopts_t *n =  TAILQ_FIRST(head) , *next;
+    while (n) {
+        next =  TAILQ_NEXT(n, _link) ;
+        free_importopts_fields(n);
+        n = next;
+    }
+     TAILQ_INIT(head); 
+}
+
+static void free_importopt_fields(importopt_t *n) {
+    if (!n) return;
+}
+
+static void free_importopt(importopt_t *n) {
+    if (!n) return;
+    free_importopt_fields(n);
 }
 
 static void free_exportopts_fields(exportopts_t *n) {
@@ -508,6 +592,7 @@ static void relink_config_fields(config_t *n);
 static void relink_config(struct config_list *head);
 static void relink_entry_fields(entry_t *n);
 static void relink_entry(entry_t *n);
+static void relink_importopts(struct importopts_list *head);
 static void relink_exportopts(struct exportopts_list *head);
 static void relink_mountopts(struct mountopts_list *head);
 
@@ -524,9 +609,14 @@ static void relink_config(struct config_list *head) {
 static void relink_entry_fields(entry_t *n) {
     (void)n;
     relink_exportopts(&n->exportopts);
+    relink_importopts(&n->importopts);
     relink_mountopts(&n->mountopts);
 }
 static void relink_entry(entry_t *n) { relink_entry_fields(n); }
+
+static void relink_importopts(struct importopts_list *head) {
+     if (TAILQ_EMPTY(head)) TAILQ_INIT(head); else TAILQ_FIRST(head)->_link.tqe_prev = &TAILQ_FIRST(head); 
+}
 
 static void relink_exportopts(struct exportopts_list *head) {
      if (TAILQ_EMPTY(head)) TAILQ_INIT(head); else TAILQ_FIRST(head)->_link.tqe_prev = &TAILQ_FIRST(head); 
@@ -566,6 +656,8 @@ static void bind_error(const char *fmt, ...) {
 
 static void bind_config(struct config_list *head);
 static void bind_entry(entry_t *n);
+static void bind_importopts(struct importopts_list *head);
+static void bind_importopt(importopt_t *n);
 static void bind_exportopts(struct exportopts_list *head);
 static void bind_exportopt(exportopt_t *n);
 static void bind_mountopts(struct mountopts_list *head);
@@ -581,6 +673,7 @@ static void bind_config(struct config_list *head) {
 static void bind_entry(entry_t *n) {
     if (!n || !n->_line) return;  /* not in the config */
     bind_exportopts(&n->exportopts);
+    bind_importopts(&n->importopts);
     bind_mountopts(&n->mountopts);
     bind_line = n->_line;
     
@@ -608,6 +701,31 @@ static void bind_entry(entry_t *n) {
             return;
         bind_error("%s", err);
     drop_export:
+        free(e.name); free(e.directory); free(e.host);
+    } else if (n->kind == ENTRY_IMPORT) {
+        struct nineshare_import e;
+        importopts_t *o;
+        const char *err;
+        memset(&e, 0, sizeof e);
+        e.name = dup_or_die(n->string);
+        e.line = n->_line;
+        TAILQ_FOREACH(o, &n->importopts, _link) {
+            char **dst;
+            if (o->importopt.kind == IMPORTOPT_HOLD) {
+                if (e.hold != 0) { bind_error("each setting may be given once"); goto drop_import; }
+                e.hold = (int)o->importopt.hyper_int;
+                if (e.hold < 1 || e.hold > 86400) { bind_error("hold is a number of seconds, 1 to 86400"); e.hold = 0; goto drop_import; }
+                continue;
+            }
+            dst = o->importopt.kind == IMPORTOPT_DIRECTORY ? &e.directory : &e.host;
+            if (*dst != NULL) { bind_error("each setting may be given once"); goto drop_import; }
+            *dst = dup_or_die(o->importopt.string);
+        }
+        err = nineshare_conf_add_import(conf, &e);
+        if (err == NULL)
+            return;
+        bind_error("%s", err);
+    drop_import:
         free(e.name); free(e.directory); free(e.host);
     } else {
         struct nineshare_mount m;
@@ -645,6 +763,17 @@ static void bind_entry(entry_t *n) {
 
 }
 
+static void bind_importopts(struct importopts_list *head) {
+    importopts_t *n;
+     TAILQ_FOREACH(n, head, _link)  {
+        bind_importopt(&n->importopt);
+    }
+}
+
+static void bind_importopt(importopt_t *n) {
+    if (!n) return;
+}
+
 static void bind_exportopts(struct exportopts_list *head) {
     exportopts_t *n;
      TAILQ_FOREACH(n, head, _link)  {
@@ -677,7 +806,7 @@ static void bind_mountopt(mountopt_t *n) {
 #include <emmintrin.h>
 #endif
 
-typedef enum { KWID_NONE = 0, KW_EXPORT, KW_MOUNT, KW_DIRECTORY, KW_HOST, KW_USER, KW_AT, KW_HOLD, KW_ACCESS } kwid_t;
+typedef enum { KWID_NONE = 0, KW_EXPORT, KW_IMPORT, KW_MOUNT, KW_DIRECTORY, KW_HOST, KW_USER, KW_AT, KW_HOLD, KW_ACCESS } kwid_t;
 
 static kwid_t kw_lookup(const char *s, size_t len) {
     switch (len) {
@@ -710,6 +839,9 @@ static kwid_t kw_lookup(const char *s, size_t len) {
         switch (s[0]) {
         case 'e':
             if (memcmp(s, "export", 6) == 0) return KW_EXPORT;
+            break;
+        case 'i':
+            if (memcmp(s, "import", 6) == 0) return KW_IMPORT;
             break;
         case 'a':
             if (memcmp(s, "access", 6) == 0) return KW_ACCESS;
@@ -918,6 +1050,12 @@ static bool parse_body_config(parser_t *p, struct config_list *out);
 static bool parse_rule_entry(parser_t *p, entry_t *out);
 static bool parse_body_entry(parser_t *p, entry_t *out);
 #define parse_rule_entry(p_, o_) ((p_)->quiet ? parse_body_entry((p_), (o_)) : (parse_rule_entry)((p_), (o_)))
+static bool parse_rule_importopts(parser_t *p, struct importopts_list *out);
+static bool parse_body_importopts(parser_t *p, struct importopts_list *out);
+#define parse_rule_importopts(p_, o_) ((p_)->quiet ? parse_body_importopts((p_), (o_)) : (parse_rule_importopts)((p_), (o_)))
+static bool parse_rule_importopt(parser_t *p, importopt_t *out);
+static bool parse_body_importopt(parser_t *p, importopt_t *out);
+#define parse_rule_importopt(p_, o_) ((p_)->quiet ? parse_body_importopt((p_), (o_)) : (parse_rule_importopt)((p_), (o_)))
 static bool parse_rule_exportopts(parser_t *p, struct exportopts_list *out);
 static bool parse_body_exportopts(parser_t *p, struct exportopts_list *out);
 #define parse_rule_exportopts(p_, o_) ((p_)->quiet ? parse_body_exportopts((p_), (o_)) : (parse_rule_exportopts)((p_), (o_)))
@@ -985,6 +1123,14 @@ static inline bool parse_body_entry(parser_t *p, entry_t *out) {
 #define r (*out)
     skip_ws(p);
     save = p->pos;
+    if (p->quiet && p->pos < p->len) {
+        switch ((unsigned char)p->text[p->pos]) {
+        case 105:
+            goto alt_entry_2;
+        case 109:
+            goto alt_entry_3;
+        }
+    }
     if (!expect_word(p, "export", 6)) { goto alt_fail_1; }
     skip_ws(p);
     if (!parse_rule_string(p, &r.string)) { goto alt_fail_1; }
@@ -998,21 +1144,120 @@ static inline bool parse_body_entry(parser_t *p, entry_t *out) {
     goto ok;
 alt_fail_1:
     p->pos = save; free_entry_fields(&r); memset(&r.string, 0, sizeof r.string); memset(&r.exportopts, 0, sizeof r.exportopts); memset(&r.kind, 0, sizeof r.kind);
-    if (!expect_word(p, "mount", 5)) { goto alt_fail_2; }
+alt_entry_2: ;
+    if (!expect_word(p, "import", 6)) { goto alt_fail_2; }
     skip_ws(p);
     if (!parse_rule_string(p, &r.string)) { goto alt_fail_2; }
     skip_ws(p);
     if (!expect_lit(p, "{", 1)) { goto alt_fail_2; }
     skip_ws(p);
-    if (!parse_rule_mountopts(p, &r.mountopts)) { goto alt_fail_2; }
+    if (!parse_rule_importopts(p, &r.importopts)) { goto alt_fail_2; }
     skip_ws(p);
     if (!expect_lit(p, "}", 1)) { goto alt_fail_2; }
-    r.kind = ENTRY_MOUNT;
+    r.kind = ENTRY_IMPORT;
     goto ok;
 alt_fail_2:
+    p->pos = save; free_entry_fields(&r); memset(&r.string, 0, sizeof r.string); memset(&r.importopts, 0, sizeof r.importopts); memset(&r.kind, 0, sizeof r.kind);
+alt_entry_3: ;
+    if (!expect_word(p, "mount", 5)) { goto alt_fail_3; }
+    skip_ws(p);
+    if (!parse_rule_string(p, &r.string)) { goto alt_fail_3; }
+    skip_ws(p);
+    if (!expect_lit(p, "{", 1)) { goto alt_fail_3; }
+    skip_ws(p);
+    if (!parse_rule_mountopts(p, &r.mountopts)) { goto alt_fail_3; }
+    skip_ws(p);
+    if (!expect_lit(p, "}", 1)) { goto alt_fail_3; }
+    r.kind = ENTRY_MOUNT;
+    goto ok;
+alt_fail_3:
     p->pos = save; free_entry_fields(&r); memset(&r, 0, sizeof r); return false;
 ok:
     { size_t _l, _c; line_col(p, save, &_l, &_c); r._line = _l; }
+    return true;
+}
+#undef r
+
+static bool parse_body_importopts(parser_t *p, struct importopts_list *out);
+static bool (parse_rule_importopts)(parser_t *p, struct importopts_list *out) {
+    bool ok_;
+    if (p->depth >= HBNF_MAX_DEPTH) { fail (p, "shallower nesting", 0, p->text + p->pos, p->pos < p->len ? 1 : 0); return false; }
+    if (!p->quiet && p->depth < 24) { p->stk[p->depth] =  3; p->stkpos[p->depth] = p->pos; }
+    p->depth++;
+    ok_ = parse_body_importopts(p, out);
+    p->depth--;
+    return ok_;
+}
+static inline bool parse_body_importopts(parser_t *p, struct importopts_list *out) {
+    struct importopts_list head;
+     TAILQ_INIT(&head); 
+    hbnf_chunk *ac_ = NULL; size_t au_ = 0; int open_ = 0;
+    while (p->pos < p->len) {
+        ac_ = hbnf_arena; au_ = ac_ ? ac_->used : 0; open_ = 1;
+        importopts_t *nn = (importopts_t *)hbnf_alloc(sizeof(*nn));
+        if (!nn) hbnf_oom();
+        size_t save = p->pos;
+        skip_ws(p);
+        if (!parse_rule_importopt(p, &nn->importopt)) { goto alt_fail_1; }
+        goto have;
+alt_fail_1:
+        p->pos = save; break;
+have:
+         TAILQ_INSERT_TAIL(&head, nn, _link); 
+        open_ = 0;
+    }
+    if (open_ && ac_ && hbnf_arena == ac_) { memset (ac_->data + au_, 0, ac_->used - au_); ac_->used = au_; }
+    *out = head; return true;
+}
+#undef r
+
+static bool parse_body_importopt(parser_t *p, importopt_t *out);
+static bool (parse_rule_importopt)(parser_t *p, importopt_t *out) {
+    bool ok_;
+    if (p->depth >= HBNF_MAX_DEPTH) { fail (p, "shallower nesting", 0, p->text + p->pos, p->pos < p->len ? 1 : 0); return false; }
+    if (!p->quiet && p->depth < 24) { p->stk[p->depth] =  4; p->stkpos[p->depth] = p->pos; }
+    p->depth++;
+    ok_ = parse_body_importopt(p, out);
+    p->depth--;
+    return ok_;
+}
+static inline bool parse_body_importopt(parser_t *p, importopt_t *out) {
+    size_t save = p->pos;
+
+#define r (*out)
+    const char *num_hyper_int = NULL;
+    skip_ws(p);
+    save = p->pos;
+    if (p->quiet && p->pos < p->len) {
+        switch ((unsigned char)p->text[p->pos]) {
+        case 104:
+            goto alt_entry_2;
+        }
+    }
+    if (!expect_word(p, "directory", 9)) { goto alt_fail_1; }
+    skip_ws(p);
+    if (!parse_rule_string(p, &r.string)) { goto alt_fail_1; }
+    r.kind = IMPORTOPT_DIRECTORY;
+    goto ok;
+alt_fail_1:
+    p->pos = save; free_importopt_fields(&r); memset(&r.string, 0, sizeof r.string); memset(&r.kind, 0, sizeof r.kind); num_hyper_int = NULL;
+alt_entry_2: ;
+    if (!expect_word(p, "host", 4)) { goto alt_fail_2; }
+    skip_ws(p);
+    if (!parse_rule_string(p, &r.string)) { goto alt_fail_2; }
+    r.kind = IMPORTOPT_HOST;
+    goto ok;
+alt_fail_2:
+    p->pos = save; free_importopt_fields(&r); memset(&r.string, 0, sizeof r.string); memset(&r.kind, 0, sizeof r.kind); num_hyper_int = NULL;
+    if (!expect_word(p, "hold", 4)) { goto alt_fail_3; }
+    skip_ws(p);
+    { size_t n = scan_int(p->text, p->pos, p->len); if (!n) { fail(p, "a number", 0, p->text + p->pos, 0); goto alt_fail_3; } num_hyper_int = p->text + p->pos; p->pos += n; }
+    r.kind = IMPORTOPT_HOLD;
+    goto ok;
+alt_fail_3:
+    p->pos = save; free_importopt_fields(&r); memset(&r, 0, sizeof r); return false;
+ok:
+    if (num_hyper_int) r.hyper_int = atoll(num_hyper_int);
     return true;
 }
 #undef r
@@ -1021,7 +1266,7 @@ static bool parse_body_exportopts(parser_t *p, struct exportopts_list *out);
 static bool (parse_rule_exportopts)(parser_t *p, struct exportopts_list *out) {
     bool ok_;
     if (p->depth >= HBNF_MAX_DEPTH) { fail (p, "shallower nesting", 0, p->text + p->pos, p->pos < p->len ? 1 : 0); return false; }
-    if (!p->quiet && p->depth < 24) { p->stk[p->depth] =  3; p->stkpos[p->depth] = p->pos; }
+    if (!p->quiet && p->depth < 24) { p->stk[p->depth] =  5; p->stkpos[p->depth] = p->pos; }
     p->depth++;
     ok_ = parse_body_exportopts(p, out);
     p->depth--;
@@ -1054,7 +1299,7 @@ static bool parse_body_exportopt(parser_t *p, exportopt_t *out);
 static bool (parse_rule_exportopt)(parser_t *p, exportopt_t *out) {
     bool ok_;
     if (p->depth >= HBNF_MAX_DEPTH) { fail (p, "shallower nesting", 0, p->text + p->pos, p->pos < p->len ? 1 : 0); return false; }
-    if (!p->quiet && p->depth < 24) { p->stk[p->depth] =  4; p->stkpos[p->depth] = p->pos; }
+    if (!p->quiet && p->depth < 24) { p->stk[p->depth] =  6; p->stkpos[p->depth] = p->pos; }
     p->depth++;
     ok_ = parse_body_exportopt(p, out);
     p->depth--;
@@ -1105,7 +1350,7 @@ static bool parse_body_mountopts(parser_t *p, struct mountopts_list *out);
 static bool (parse_rule_mountopts)(parser_t *p, struct mountopts_list *out) {
     bool ok_;
     if (p->depth >= HBNF_MAX_DEPTH) { fail (p, "shallower nesting", 0, p->text + p->pos, p->pos < p->len ? 1 : 0); return false; }
-    if (!p->quiet && p->depth < 24) { p->stk[p->depth] =  5; p->stkpos[p->depth] = p->pos; }
+    if (!p->quiet && p->depth < 24) { p->stk[p->depth] =  7; p->stkpos[p->depth] = p->pos; }
     p->depth++;
     ok_ = parse_body_mountopts(p, out);
     p->depth--;
@@ -1138,7 +1383,7 @@ static bool parse_body_mountopt(parser_t *p, mountopt_t *out);
 static bool (parse_rule_mountopt)(parser_t *p, mountopt_t *out) {
     bool ok_;
     if (p->depth >= HBNF_MAX_DEPTH) { fail (p, "shallower nesting", 0, p->text + p->pos, p->pos < p->len ? 1 : 0); return false; }
-    if (!p->quiet && p->depth < 24) { p->stk[p->depth] =  6; p->stkpos[p->depth] = p->pos; }
+    if (!p->quiet && p->depth < 24) { p->stk[p->depth] =  8; p->stkpos[p->depth] = p->pos; }
     p->depth++;
     ok_ = parse_body_mountopt(p, out);
     p->depth--;
@@ -1199,7 +1444,7 @@ static bool parse_body_string(parser_t *p, string_t *out);
 static bool (parse_rule_string)(parser_t *p, string_t *out) {
     bool ok_;
     if (p->depth >= HBNF_MAX_DEPTH) { fail (p, "shallower nesting", 0, p->text + p->pos, p->pos < p->len ? 1 : 0); return false; }
-    if (!p->quiet && p->depth < 24) { p->stk[p->depth] =  25; p->stkpos[p->depth] = p->pos; }
+    if (!p->quiet && p->depth < 24) { p->stk[p->depth] =  27; p->stkpos[p->depth] = p->pos; }
     p->depth++;
     ok_ = parse_body_string(p, out);
     p->depth--;
@@ -1217,6 +1462,8 @@ static inline bool parse_body_string(parser_t *p, string_t *out) {
 static const char *const hbnf_rn[] = { NULL,
 "config",
 "entry",
+"importopts",
+"importopt",
 "exportopts",
 "exportopt",
 "mountopts",
@@ -2215,11 +2462,15 @@ void nineshare_conf_free(struct nineshare_conf *c) {
     for (i = 0; i < c->nexports; i++) {
         free(c->exports[i].name); free(c->exports[i].directory); free(c->exports[i].host);
     }
+    for (i = 0; i < c->nimports; i++) {
+        free(c->imports[i].name); free(c->imports[i].directory); free(c->imports[i].host);
+    }
     for (i = 0; i < c->nmounts; i++) {
         free(c->mounts[i].name); free(c->mounts[i].user); free(c->mounts[i].at);
     }
     free(c->exports);
     free(c->mounts);
+    free(c->imports);
     nineshare_conf_init(c);
 }
 

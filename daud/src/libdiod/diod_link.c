@@ -168,12 +168,15 @@ static int spawn_carrier (const char *cmd, pid_t *pid)
     return sv[0];
 }
 
+int diod_link_once = 0;
+
 static void run_session (struct lt *t, const char *cmd, int hold,
                          volatile int *shutdown, const sigset_t *mask)
 {
     pid_t child = 0;
     time_t next_try = 0;
-    int delay = 1, was_up = 0;
+    int delay = 1, was_up = 0, ever_up = 0;
+    time_t began = time (NULL);
 
     for (;;) {
         struct pollfd p[2];
@@ -182,7 +185,8 @@ static void run_session (struct lt *t, const char *cmd, int hold,
         unsigned ev;
 
         pthread_mutex_lock (&t->m);
-        if (*shutdown || lk_state (t->lk) == LK_S_LOST) {
+        if (*shutdown || lk_state (t->lk) == LK_S_LOST
+            || (diod_link_once && !ever_up && now - began >= hold)) {
             pthread_mutex_unlock (&t->m);
             break;
         }
@@ -215,7 +219,7 @@ static void run_session (struct lt *t, const char *cmd, int hold,
         ev = lk_pump (t->lk, p[1].fd >= 0 ? p[1].revents : 0);
         ev |= lk_tick (t->lk, now, hold);
         if (ev & LK_EV_UP) {
-            was_up = 1;
+            was_up = ever_up = 1;
             delay = 1;
             msg ("link: up");
         }
@@ -280,5 +284,7 @@ void diod_link_run (Npsrv *srv, const char *cmd, int hold, const char *uname,
         close (t->wake[0]);
         close (t->wake[1]);
         free (t);
+        if (diod_link_once)
+            *shutdown = 1;
     }
 }

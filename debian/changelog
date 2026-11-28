@@ -1,3 +1,11 @@
+9share (0.1.0-13) unstable; urgency=medium
+
+  * 9share import / unimport: the other direction, for a machine that cannot be dialled.  New `9share offer` and `9share carry` (run by ssh
+    on the machine with the files), `import` blocks in 9share.conf, daud --once.
+  * 9share reload (SIGHUP): configuration is read at start and when asked, not polled; the editing commands ask for it; ExecReload in the unit.
+
+ -- David Walther <david@clearbrookdistillery.com>  Sat, 28 Nov 2026 12:00:00 -0700
+
 9share (0.1.0-12) unstable; urgency=medium
 
   * daud no longer dies when a Tclunk of a fid arrives while reads of the same fid are still being served.  The pool of threads ran the two at the same

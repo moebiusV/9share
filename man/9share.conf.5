@@ -26,7 +26,9 @@ write the blocks (and
 and
 .B unmount
 take them away) without changing anything else in the file, so comments and the layout the author gave it stay.
-The files may be edited by hand; the daemon notices within a few seconds.
+The files may be edited by hand; the programs read them when they start and when asked, so run
+.B 9share reload
+(as the user for the user's file, with sudo for the system file) afterwards.  The commands that edit the files ask for it themselves.
 .SS export
 .nf
 export "projects" {
@@ -47,6 +49,24 @@ The directory to share: an absolute path of letters, digits and . _ + @ \- / (no
 Where to send it, as
 .BR ssh (1)
 knows it: a name from ~/.ssh/config, or user@host.  ssh must work from this machine to it without a password.  Required.
+.SS import
+.nf
+import "projects" {
+        directory src/projects
+        host bob.example.org
+}
+.fi
+The other direction: HOST has the files and this machine's ssh dials out to it (\fB9share import\fP).  Needs a \fBmount\fP block of the same name
+on this machine, and 9share on the host.  The name is the share's, as for \fBexport\fP; it must not be the name of an export.
+.TP
+.B directory
+A path of letters, digits and . _ + @ \- / (no spaces, no \fB..\fP) on the host: absolute, or relative to the home of the account ssh logs in as.  Required.
+.TP
+.B host
+As for \fBexport\fP.  Required.
+.TP
+.B hold
+Seconds the connection waits for a lost ssh to come back, 1 to 86400, default 600.
 .SS mount
 .nf
 mount "projects" {

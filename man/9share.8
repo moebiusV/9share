@@ -19,6 +19,13 @@
 .B 9share unexport
 .I NAME
 .br
+.B 9share import
+.I HOST DIR
+.RI [ NAME ]
+.br
+.B 9share unimport
+.I NAME
+.br
 .B sudo 9share unmount
 .I NAME
 .br
@@ -33,6 +40,8 @@
 .br
 .B sudo 9share shutdown
 .RB [ \-\-force ]
+.br
+.B 9share reload
 .br
 .B sudo 9share restart
 .br
@@ -171,7 +180,7 @@ See
 .BI "export " "DIR HOST " [ NAME ]
 Share DIR with HOST (a name as ssh knows it) as NAME, by default the directory's own name.  The block is added to
 .IR ~/.config/9share/9share.conf ;
-the running service notices within a few seconds.  Prints the command to run on HOST.
+the running service is told to read it again (as every command that edits the file does).  Prints the command to run on HOST.
 .TP
 .BI unexport " NAME"
 Stop sharing it.
@@ -186,6 +195,31 @@ first, so that a failure leaves this one as it was.  A secret that exists on eit
 .BR \-\-force .
 HOST needs 9share installed.  Without a secret file the link trusts ssh alone.  A secret file that exists but cannot be used (not
 the owner's, or readable by others) stops the share rather than falling back to trusting ssh.
+.SS The other way round: pulling a directory (as an ordinary user, on the machine that shows the files)
+When the machine with the files cannot be reached from the one that shows them (no ssh server, behind NAT), the machine that shows them
+can dial out instead.  Everything else is the same: the mount, the resumable link, the secret.
+.TP
+.BI "import " "HOST DIR " [ NAME ]
+Show the directory DIR of HOST here, as NAME (by default the directory's last name, which must then be a valid name).  DIR is absolute, or
+relative to the home of the account ssh logs in as on HOST.  The block is added to
+.IR ~/.config/9share/9share.conf ;
+it also needs a mount of the same NAME here (\fBsudo 9share mount\fP \fIUSER NAME DIR\fP, USER being the account that ran import), and
+9share on HOST.  While the mount is wanted the service runs ssh to HOST, which runs
+.B 9share offer
+there; that starts a daud that dials back through the same ssh (it ends when the importer has gone).  When ssh drops it is run again and
+the connection carries on, as with an export.
+.TP
+.BI unimport " NAME"
+Stop importing it (the mount block is not touched).
+.PP
+Two commands are run by ssh on HOST and are not for typing:
+.B 9share offer
+.I NAME DIR
+.RB [ \-\-hold
+.IR N ]
+and its helper
+.B 9share carry
+.IR NAME .
 .SS On the machine that shows them
 .TP
 .BI "mount " "USER NAME DIR"
@@ -200,6 +234,22 @@ It is mounted while the exporter's connection is up and unmounted when the sessi
 .BR rw | ro | off " \fINAME\fP"
 (as USER, no sudo) Mounted read-write (the default), read-only, or not mounted.  Follows within a few seconds.
 .SS On either
+.TP
+.B reload
+Make the running programs read their configuration again.  The configuration is read when a program starts and when it is asked: the
+commands that edit a file (\fBexport\fP, \fBunexport\fP, \fBimport\fP, \fBunimport\fP, \fBmount\fP, \fBunmount\fP) ask for it themselves, so this is
+for a file that was edited by hand.  Run as an ordinary user it asks that user's \fB9share serve\fP (the exports and imports), which
+restarts only the blocks that changed: what did not change keeps running, open files included.  Run as root (\fBsudo\fP) it asks the
+daemon, which re-reads
+.I /etc/9share/9share.conf
+(the mounts) and has the serves it started read their files too.  It is the signal SIGHUP, which the service's
+.B systemctl reload
+sends as well.  Unlike
+.BR restart ,
+it takes nothing down.  Permissions are the exception: whether a file may be trusted is looked at on every pass, so making one writable by
+others stops what it says at once.  The mode a mount is wanted in
+.RB ( "9share rw|ro|off" )
+is not configuration and follows by itself.
 .TP
 .B status
 What is shared, what is mounted, and whether the daemon runs.
@@ -235,8 +285,8 @@ with
 to the other machine as the carrier; ssh runs
 .B "9share link NAME"
 there.  It is started again when it dies, after 1, 2, 4 ... 30 seconds; ssh runs with ServerAliveInterval 15 and ServerAliveCountMax
-3, so a dead connection is noticed in about 45 seconds and a new one is made.  The configuration file is read again whenever it
-changes, and only the exports whose block changed are restarted; so is the export whose secret file appears, changes or goes.
+3, so a dead connection is noticed in about 45 seconds and a new one is made.  The configuration file is read again when serve is asked
+to (SIGHUP, \fB9share reload\fP), and only the exports whose block changed are restarted; so is the export whose secret file appears, changes or goes.
 .TP
 .B relay
 The receiving end of one mount, run by the daemon as the mount's user: it holds the link's session and one end of the socket pair, and

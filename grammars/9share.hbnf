@@ -19,7 +19,7 @@ language C
 prefix none
 statements
 keywords {
-    export mount directory host user at hold access
+    export import mount directory host user at hold access
 }
 layout tailq
 ; phrase rules skip `ws` between their elements; character rules never do (defined below)
@@ -47,7 +47,13 @@ static char *dup_or_die(const char *v) {
 config = | config entry
 
 entry  = "export" string "{" exportopts "}"
+       | "import" string "{" importopts "}"
        | "mount" string "{" mountopts "}"
+
+importopts = | importopts importopt
+importopt  = "directory" string
+           | "host" string
+           | "hold" int
 
 exportopts = | exportopts exportopt
 exportopt  = "directory" string
@@ -86,6 +92,31 @@ action entry {
             return;
         bind_error("%s", err);
     drop_export:
+        free(e.name); free(e.directory); free(e.host);
+    } else if (n->kind == ENTRY_IMPORT) {
+        struct nineshare_import e;
+        importopts_t *o;
+        const char *err;
+        memset(&e, 0, sizeof e);
+        e.name = dup_or_die(n->string);
+        e.line = n->_line;
+        TAILQ_FOREACH(o, &n->importopts, _link) {
+            char **dst;
+            if (o->importopt.kind == IMPORTOPT_HOLD) {
+                if (e.hold != 0) { bind_error("each setting may be given once"); goto drop_import; }
+                e.hold = (int)o->importopt.hyper_int;
+                if (e.hold < 1 || e.hold > 86400) { bind_error("hold is a number of seconds, 1 to 86400"); e.hold = 0; goto drop_import; }
+                continue;
+            }
+            dst = o->importopt.kind == IMPORTOPT_DIRECTORY ? &e.directory : &e.host;
+            if (*dst != NULL) { bind_error("each setting may be given once"); goto drop_import; }
+            *dst = dup_or_die(o->importopt.string);
+        }
+        err = nineshare_conf_add_import(conf, &e);
+        if (err == NULL)
+            return;
+        bind_error("%s", err);
+    drop_import:
         free(e.name); free(e.directory); free(e.host);
     } else {
         struct nineshare_mount m;
@@ -178,11 +209,15 @@ void nineshare_conf_free(struct nineshare_conf *c) {
     for (i = 0; i < c->nexports; i++) {
         free(c->exports[i].name); free(c->exports[i].directory); free(c->exports[i].host);
     }
+    for (i = 0; i < c->nimports; i++) {
+        free(c->imports[i].name); free(c->imports[i].directory); free(c->imports[i].host);
+    }
     for (i = 0; i < c->nmounts; i++) {
         free(c->mounts[i].name); free(c->mounts[i].user); free(c->mounts[i].at);
     }
     free(c->exports);
     free(c->mounts);
+    free(c->imports);
     nineshare_conf_init(c);
 }
 
