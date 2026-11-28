@@ -6,7 +6,7 @@ AM_CPPFLAGS = \
 	$(CAP_CFLAGS) \
 	$(LUA_CFLAGS)
 
-# daud: the one program p9share needs (upstream's diodcli, dtop and mount.diod are not built)
+# daud: the one program 9share needs (upstream's diodcli, dtop and mount.diod are not built)
 sbin_PROGRAMS = daud
 
 common_ldadd = \

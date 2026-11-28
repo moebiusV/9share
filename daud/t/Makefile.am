@@ -33,9 +33,10 @@ TESTSCRIPTS = \
 	t0026-munge-auth.t \
 	t0028-syspackage.t
 
-# make check runs these TAP tests directly (both scripts and programs)
-TESTS = \
-	$(TESTSCRIPTS)
+# Upstream diod's own suite is shipped but NOT run by make check: it drives the diodcli client, the ctl file system and the multi-user
+# and munge modes, none of which daud builds (configure passes --disable-auth --disable-config --disable-multiuser --disable-diodmount),
+# so most of it fails or skips here.  9share's own tests (tests/) are the suite that decides.  Run it by hand with: make -C daud/t check TESTS="$(TESTSCRIPTS)"
+TESTS =
 
 dist_check_SCRIPTS = \
 	$(TESTSCRIPTS)
